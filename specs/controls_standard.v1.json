@@ -1,0 +1,155 @@
+{
+  "meta": {
+    "name": "GRC \u2014 Controls",
+    "version": "v1",
+    "description": "Deterministic rules for Control authoring: ID, Name, Description, Guidance (preamble \u2192 steps)."
+  },
+  "rules": {
+    "id": {
+      "required": true,
+      "unique_within_framework": true,
+      "structured": true,
+      "separator": ".",
+      "max_length": 24
+    },
+    "name": {
+      "required": true,
+      "concise_max_words": 12,
+      "purpose_clarity": true,
+      "action_or_specific": true,
+      "role_neutral": true,
+      "avoid_redundant_framework_name": true
+    },
+    "description": {
+      "required": true,
+      "present_tense": true,
+      "passive_voice": true,
+      "single_objective": true,
+      "no_steps": true,
+      "role_neutral": true,
+      "avoid_modal_verbs": [
+        "should",
+        "could",
+        "may",
+        "might"
+      ],
+      "min_words": 25,
+      "max_words": 120,
+      "standalone_clarity": true
+    },
+    "guidance": {
+      "required": true,
+      "preamble_required": true,
+      "preamble_must_cover": [
+        "objective_what",
+        "rationale_why"
+      ],
+      "preamble_max_words": 60,
+      "structured_steps_required": true,
+      "steps_min": 2,
+      "steps_max": 8,
+      "steps_must_be_actionable": true,
+      "steps_present_tense": true,
+      "steps_active_voice": true,
+      "technology_agnostic": true,
+      "role_neutral": true,
+      "avoid_vendor_names": true
+    }
+  },
+  "scoring": {
+    "dimensions": [
+      {
+        "key": "id_quality",
+        "weight": 0.15,
+        "checks": [
+          "required",
+          "unique_within_framework",
+          "structured",
+          "max_length_ok"
+        ]
+      },
+      {
+        "key": "name_quality",
+        "weight": 0.15,
+        "checks": [
+          "concise_max_words",
+          "purpose_clarity",
+          "action_or_specific",
+          "role_neutral",
+          "no_framework_redundancy"
+        ]
+      },
+      {
+        "key": "description_quality",
+        "weight": 0.3,
+        "checks": [
+          "present_tense",
+          "passive_voice",
+          "single_objective",
+          "no_steps",
+          "role_neutral",
+          "no_modal_verbs",
+          "within_word_bounds",
+          "standalone_clarity"
+        ]
+      },
+      {
+        "key": "guidance_quality",
+        "weight": 0.4,
+        "checks": [
+          "preamble_required",
+          "preamble_covers_objective_rationale",
+          "preamble_within_word_bound",
+          "structured_steps_required",
+          "steps_min_max_ok",
+          "steps_actionable",
+          "steps_present_active",
+          "technology_agnostic",
+          "role_neutral",
+          "no_vendor_names"
+        ]
+      }
+    ],
+    "thresholds": {
+      "pass": 80,
+      "partial": 60
+    }
+  },
+  "detectors": {
+    "description_contains_steps": {
+      "trigger": "description has step markers",
+      "action": "warn",
+      "suggestion_key": "move_steps_to_guidance"
+    },
+    "guidance_missing_structure": {
+      "trigger": "no bullets/numbering in guidance",
+      "action": "warn",
+      "suggestion_key": "structure_guidance_steps"
+    },
+    "guidance_missing_preamble": {
+      "trigger": "guidance starts with steps",
+      "action": "warn",
+      "suggestion_key": "add_preamble_what_why"
+    }
+  },
+  "suggestions": [
+    {
+      "key": "move_steps_to_guidance",
+      "message": "Control Description must describe the outcome, not the steps. Move implementation steps to Guidance."
+    },
+    {
+      "key": "structure_guidance_steps",
+      "message": "Guidance should be structured as 2\u20138 clear, actionable steps."
+    },
+    {
+      "key": "add_preamble_what_why",
+      "message": "Begin Guidance with a brief preamble explaining the objective (what) and rationale (why), then list steps."
+    }
+  ],
+  "cadence_policy": {
+    "soft_warning_on_fixed_cadence": true,
+    "no_score_penalty": true,
+    "suppression_if_text_mentions_clause": true,
+    "warning_message": "A fixed cadence was detected (e.g., '12 months' or 'quarterly'). Unless required by a law/standard, prefer flexible wording such as 'at regular intervals' or 'for a period aligned to risk and regulatory requirements'."
+  }
+}

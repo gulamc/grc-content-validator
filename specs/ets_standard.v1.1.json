@@ -1,0 +1,227 @@
+{
+  "meta": {
+    "name": "GRC \u2014 Evidence Tasks",
+    "version": "v1.1",
+    "description": "Authoritative, deterministic rules for ET authoring. 'What' = outcome; 'How' = tangible artifacts/methods."
+  },
+  "rules": {
+    "what_to_collect": {
+      "must_be_outcome_statement": true,
+      "allowed_outcome_verbs": [
+        "evidence that",
+        "evidence of",
+        "has been",
+        "is configured",
+        "is implemented",
+        "is enabled",
+        "is enforced",
+        "is documented",
+        "is approved",
+        "is communicated",
+        "is retained",
+        "are retained",
+        "is monitored",
+        "is reviewed"
+      ],
+      "forbidden_artifact_terms": [
+        "diagram",
+        "screenshot",
+        "log",
+        "report",
+        "export",
+        "file",
+        "yaml",
+        "json",
+        "conf",
+        "ticket",
+        "record",
+        "minutes",
+        "contract",
+        "policy document",
+        "sow"
+      ],
+      "forbidden_joined_lists_hint": true,
+      "single_topic_required": true,
+      "bundle_language_allowed": true,
+      "max_words": 45
+    },
+    "how_to_collect": {
+      "must_list_tangible_artifacts": true,
+      "min_artifacts": 1,
+      "structured_format_required": true,
+      "role_neutral_language": true,
+      "multiple_methods_allowed": true,
+      "technology_agnostic": true,
+      "verifiability_required": true,
+      "max_artifacts": 4
+    },
+    "composite_constraints": {
+      "composite_artifacts_allowed": true,
+      "same_owner_or_function": true,
+      "same_system_or_linked_systems": true,
+      "same_time_window": true,
+      "min_time_overlap_days": 365,
+      "max_artifacts": 3,
+      "bundle_justification_required": true,
+      "partial_threshold": 0.6
+    }
+  },
+  "detectors": {
+    "artifact_leak_into_what": {
+      "trigger": "what contains artifact terms or list patterns",
+      "action": "warn_or_fail",
+      "suggestion_key": "move_artifacts_to_how"
+    },
+    "missing_outcome_in_what": {
+      "trigger": "what lacks outcome verbs",
+      "action": "warn",
+      "suggestion_key": "rewrite_as_outcome"
+    },
+    "no_tangible_in_how": {
+      "trigger": "how contains zero canonical artifact types",
+      "action": "fail",
+      "suggestion_key": "add_tangible_artifacts"
+    },
+    "unstructured_how": {
+      "trigger": "how has no bullets/numbers/letters",
+      "action": "warn",
+      "suggestion_key": "structure_how"
+    },
+    "role_specific_in_how": {
+      "trigger": "how contains role-specific agents",
+      "action": "warn",
+      "suggestion_key": "role_neutralize"
+    }
+  },
+  "artifact_taxonomy": {
+    "types": [
+      {
+        "type": "policy_document",
+        "synonyms": [
+          "policy",
+          "policy document"
+        ],
+        "regex": "(?i)\\bpolicy\\b"
+      },
+      {
+        "type": "network_diagram",
+        "synonyms": [
+          "network diagram",
+          "architecture diagram",
+          "topology"
+        ],
+        "regex": "(?i)(diagram|topology|architecture)"
+      },
+      {
+        "type": "config_file",
+        "synonyms": [
+          "configuration",
+          "config",
+          "settings",
+          "export"
+        ],
+        "regex": "(?i)(config|configuration|settings|export|\\.ya?ml|\\.json|\\.conf)"
+      },
+      {
+        "type": "config_screenshot",
+        "synonyms": [
+          "screenshot"
+        ],
+        "regex": "(?i)(screenshot|screen[- ]?grab|ui)"
+      },
+      {
+        "type": "audit_log",
+        "synonyms": [
+          "log",
+          "audit log",
+          "siem",
+          "cloudtrail"
+        ],
+        "regex": "(?i)(log|audit|siem|cloudtrail|event|access)"
+      },
+      {
+        "type": "approval_record",
+        "synonyms": [
+          "approval",
+          "sign-off"
+        ],
+        "regex": "(?i)(approval|sign[- ]?off)"
+      }
+    ]
+  },
+  "topic_profiles": [],
+  "scoring": {
+    "dimensions": [
+      {
+        "key": "what_outcome_quality",
+        "weight": 0.35,
+        "checks": [
+          "must_be_outcome_statement",
+          "single_topic_required",
+          "no_artifact_leak",
+          "concise_within_max_words"
+        ]
+      },
+      {
+        "key": "how_tangible_and_structured",
+        "weight": 0.4,
+        "checks": [
+          "must_list_tangible_artifacts",
+          "structured_format_required",
+          "role_neutral_language",
+          "verifiability_required"
+        ]
+      },
+      {
+        "key": "cohesion_bundle_rules",
+        "weight": 0.15,
+        "checks": [
+          "composite_owner_equivalence",
+          "composite_system_linkage",
+          "composite_time_overlap",
+          "composite_artifact_limit"
+        ]
+      },
+      {
+        "key": "clarity",
+        "weight": 0.1,
+        "checks": [
+          "plain_language",
+          "no_vague_terms"
+        ]
+      }
+    ],
+    "thresholds": {
+      "pass": 80,
+      "partial": 60
+    }
+  },
+  "suggestions": [
+    {
+      "key": "move_artifacts_to_how",
+      "message": "Keep \u2018What\u2019 as a high-level outcome and move artifact lists into \u2018How\u2019."
+    },
+    {
+      "key": "rewrite_as_outcome",
+      "message": "Rewrite \u2018What\u2019 as an outcome statement (e.g., \u2018Provide evidence that X is configured/implemented/approved\u2019)."
+    },
+    {
+      "key": "add_tangible_artifacts",
+      "message": "List one or more tangible artifacts in \u2018How\u2019 (diagram, config export/screenshot, logs, report)."
+    },
+    {
+      "key": "structure_how",
+      "message": "Structure \u2018How\u2019 as bullets or lettered items so methods are scannable and repeatable."
+    },
+    {
+      "key": "role_neutralize",
+      "message": "Use role-neutral language in \u2018How\u2019 (\u2018Maintain/Retain/Provide\u2019) rather than assigning a role (\u2018Admin/Manager should \u2026\u2019)."
+    }
+  ],
+  "cadence_policy": {
+    "soft_warning_on_fixed_cadence": true,
+    "no_score_penalty": true,
+    "suppression_if_text_mentions_clause": true,
+    "warning_message": "A fixed cadence was detected (e.g., '12 months' or 'quarterly'). Unless required by a law/standard, prefer flexible wording such as 'at regular intervals' or 'for a period aligned to risk and regulatory requirements'."
+  }
+}
