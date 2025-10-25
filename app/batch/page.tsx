@@ -1,251 +1,199 @@
+// app/batch/page.tsx
 'use client';
 
 import React, { useState } from 'react';
-import * as XLSX from 'xlsx';
-import BatchResultCard from '@/components/BatchResultCard';
-
-type ItemET = {
-  title?: string;
-  what_to_collect: string;
-  how_to_collect: string;
-  bundle_justification?: string;
-};
-
-type ItemControl = {
-  id: string;
-  name: string;
-  description: string;
-  guidance: string;
-  framework?: string;
-};
-
-type ParsedSheet = { type: 'ET' | 'CONTROL'; rows: any[] };
-
-function inferType(headers: string[]): 'ET' | 'CONTROL' {
-  const h = headers.map((x) => x.trim().toLowerCase());
-  const isControl =
-    h.includes('control id') &&
-    h.includes('control name') &&
-    h.includes('control description') &&
-    h.includes('control guidance');
-  return isControl ? 'CONTROL' : 'ET';
-}
-
-function normalizeRowET(row: any): ItemET | null {
-  const keys = Object.keys(row);
-  const find = (cands: string[]) => {
-    for (const c of cands) {
-      const k = keys.find((k) => k.trim().toLowerCase() === c);
-      if (k) return row[k];
-    }
-    return '';
-  };
-  const title = find(['title']);
-  const what = find(['what to collect', 'what', 'what_to_collect']);
-  const how = find(['how to collect', 'how', 'how_to_collect']);
-  if (!what || !how) return null;
-  return {
-    title: title ? String(title) : undefined,
-    what_to_collect: String(what || ''),
-    how_to_collect: String(how || ''),
-  };
-}
-
-function normalizeRowControl(row: any): ItemControl | null {
-  const keys = Object.keys(row);
-  const get = (labels: string[]) => {
-    for (const c of labels) {
-      const k = keys.find((k) => k.trim().toLowerCase() === c);
-      if (k) return row[k];
-    }
-    return '';
-  };
-
-  const id = get(['control id', 'id']);
-  const name = get(['control name', 'name']);
-  const description = get(['control description', 'description']);
-  const guidance = get(['control guidance', 'guidance']);
-
-  if (!id || !name || !description || !guidance) return null;
-
-  return {
-    id: String(id || ''),
-    name: String(name || ''),
-    description: String(description || ''),
-    guidance: String(guidance || ''),
-  };
-}
+import { parseFile, processBatch, exportToExcel, BatchItem, BatchResult } from '@/lib/batchProcessor';
+import ResultsTable from '@/components/batch/ResultsTable';
+import DetailsModal from '@/components/batch/DetailsModal';
 
 export default function BatchPage() {
-  const [parsed, setParsed] = useState<ParsedSheet | null>(null);
-  const [originalRows, setOriginalRows] = useState<any[]>([]);
-  const [converted, setConverted] = useState<any[]>([]);
-  const [scores, setScores] = useState<any | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [processing, setProcessing] = useState(false);
+  const [progress, setProgress] = useState({ current: 0, total: 0 });
+  const [result, setResult] = useState<BatchResult | null>(null);
+  const [selectedItem, setSelectedItem] = useState<BatchItem | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [expandAll, setExpandAll] = useState<boolean>(true);
 
-  function onFile(e: React.ChangeEvent<HTMLInputElement>) {
-    setError(null);
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      try {
-        const data = new Uint8Array((evt.target?.result as ArrayBuffer) || new ArrayBuffer(0));
-        const wb = XLSX.read(data, { type: 'array' });
-        const sheet = wb.Sheets[wb.SheetNames[0]];
-        const rows = XLSX.utils.sheet_to_json<any>(sheet, { defval: '' });
-        if (!rows.length) {
-          setError('No rows found in the first sheet.');
-          return;
-        }
-        const headers = Object.keys(rows[0] || {});
-        const type = inferType(headers);
-        setParsed({ type, rows });
-        setOriginalRows(rows);
-
-        if (type === 'CONTROL') {
-          const items = rows.map(normalizeRowControl).filter(Boolean) as any[];
-          setConverted(items);
-        } else {
-          const items = rows.map(normalizeRowET).filter(Boolean) as any[];
-          setConverted(items);
-        }
-        setScores(null);
-      } catch (e: any) {
-        setError(e?.message || 'Failed to read file');
-      }
-    };
-    reader.readAsArrayBuffer(file);
-  }
-
-  async function runScore() {
-    if (!converted.length || !parsed) return;
-    setLoading(true);
-    setScores(null);
-    try {
-      const endpoint = parsed.type === 'CONTROL' ? '/api/controls/score' : '/api/et/score';
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items: converted }),
-      });
-      const json = await res.json();
-      setScores(json);
-    } catch (e: any) {
-      setError(e?.message || 'Scoring failed');
-    } finally {
-      setLoading(false);
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = e.target.files?.[0];
+    if (selectedFile) {
+      setFile(selectedFile);
+      setError(null);
+      setResult(null);
     }
-  }
+  };
 
-  function downloadJSON(obj: any, filename: string) {
-    const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
+  const handleProcess = async () => {
+    if (!file) return;
+
+    setProcessing(true);
+    setError(null);
+    setProgress({ current: 0, total: 0 });
+
+    try {
+      // Parse file
+      const { items, type } = await parseFile(file);
+      
+      // Process batch
+      const batchResult = await processBatch(items, type, (current, total) => {
+        setProgress({ current, total });
+      });
+      
+      setResult(batchResult);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleExport = () => {
+    if (!result) return;
+    exportToExcel(result);
+  };
+
+  const handleReset = () => {
+    setFile(null);
+    setResult(null);
+    setError(null);
+    setProgress({ current: 0, total: 0 });
+    setSelectedItem(null);
+  };
 
   return (
-    <div className="space-y-6">
-      <div className="card">
-        <div className="card-body space-y-4">
-          <h2 className="text-lg font-semibold">Batch upload & conversion</h2>
-          <div className="text-sm text-slate-600">
-            Download sample templates:{' '}
-            <a className="underline" href="/templates/controls_template.xlsx">
-              Controls
-            </a>{' '}
-            •{' '}
-            <a className="underline" href="/templates/ets_template.xlsx">
-              ETs
-            </a>
-          </div>
-          <p className="text-sm text-slate-600">
-            Upload an Excel (.xlsx). We convert the first sheet into “Heretto-like” JSON and score each row.
-            <br />Expected headers:
-            <br />• <b>Controls</b>: Control ID, Control Name, Control Description, Control Guidance
-            <br />• <b>ETs</b>: title, what to collect, how to collect
+    <div className="min-h-screen bg-gray-100 py-8 px-4">
+      <div className="max-w-7xl mx-auto">
+        {/* Header */}
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Batch Validator</h1>
+          <p className="text-gray-600">
+            Upload Excel or CSV files containing Controls or ETs for batch validation
           </p>
-
-          <input type="file" accept=".xlsx" className="block" onChange={onFile} />
-          {error && <div className="text-sm text-red-700">{error}</div>}
-
-          {parsed && (
-            <div className="text-sm text-slate-700">
-              Detected type: <b>{parsed.type}</b> • Rows parsed: <b>{parsed.rows.length}</b> • Converted:{' '}
-              <b>{converted.length}</b>
-            </div>
-          )}
-
-          <div className="flex flex-wrap gap-3">
-            <button className="btn btn-primary" onClick={runScore} disabled={!converted.length || loading}>
-              {loading ? 'Scoring…' : 'Convert & Score'}
-            </button>
-            <button
-              className="btn"
-              onClick={() =>
-                downloadJSON(
-                  converted,
-                  parsed?.type === 'CONTROL' ? 'controls_converted.json' : 'ets_converted.json'
-                )
-              }
-              disabled={!converted.length}
-            >
-              Download Converted JSON
-            </button>
-            <button
-              className="btn"
-              onClick={() => scores && downloadJSON(scores, 'scores.json')}
-              disabled={!scores}
-            >
-              Download Scores JSON
-            </button>
-          </div>
         </div>
-      </div>
 
-      {/* Summary + expand/collapse */}
-      {Array.isArray(scores?.results) && scores.results.filter(Boolean).length ? (
-        <>
-          <div className="flex items-center justify-between">
-            <div className="text-sm text-slate-700">
-              {(() => {
-                const r = scores.results.filter(Boolean);
-                const pass = r.filter((x: any) => x.verdict === 'pass').length;
-                const partial = r.filter((x: any) => x.verdict === 'partial').length;
-                const fail = r.filter((x: any) => x.verdict === 'fail').length;
-                return `Summary — Pass: ${pass} • Partial: ${partial} • Fail: ${fail}`;
-              })()}
+        {/* Upload Section */}
+        {!result && (
+          <div className="bg-white rounded-lg shadow p-6 mb-6">
+            <h2 className="text-xl font-semibold mb-4">Upload File</h2>
+            
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Select File (Excel or CSV)
+              </label>
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                onChange={handleFileChange}
+                disabled={processing}
+                className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 disabled:opacity-50"
+              />
             </div>
-            <button className="btn" onClick={() => setExpandAll((v) => !v)}>
-              {expandAll ? 'Collapse details' : 'Expand details'}
-            </button>
-          </div>
 
-          <div className="space-y-4">
-            {scores.results
-              .map((res: any, idx: number) => ({ res, idx }))
-              .filter((x) => !!x.res)
-              .slice(0, 50)
-              .map(({ res, idx }: any) => (
-                <BatchResultCard
-                  key={idx}
-                  i={idx} // ✅ numeric index prop expected by the card
-                  type={parsed?.type || 'ET'}
-                  original={originalRows[idx] ?? {}}
-                  converted={converted[idx] ?? {}}
-                  result={res}
-                  expand={expandAll}
-                />
-              ))}
+            {file && (
+              <div className="mb-4 p-3 bg-blue-50 rounded">
+                <p className="text-sm text-blue-800">
+                  <strong>Selected:</strong> {file.name} ({(file.size / 1024).toFixed(2)} KB)
+                </p>
+              </div>
+            )}
+
+            {error && (
+              <div className="mb-4 p-3 bg-red-50 border-l-4 border-red-400 rounded">
+                <p className="text-sm text-red-800">{error}</p>
+              </div>
+            )}
+
+            <button
+              onClick={handleProcess}
+              disabled={!file || processing}
+              className="w-full bg-blue-600 text-white py-3 px-4 rounded font-semibold hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+            >
+              {processing ? 'Processing...' : 'Process Batch'}
+            </button>
+
+            {processing && (
+              <div className="mt-4">
+                <div className="flex justify-between text-sm text-gray-600 mb-1">
+                  <span>Processing items...</span>
+                  <span>{progress.current} / {progress.total}</span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div
+                    className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${progress.total > 0 ? (progress.current / progress.total) * 100 : 0}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="mt-6 p-4 bg-gray-50 rounded">
+              <h3 className="font-semibold text-sm text-gray-700 mb-2">File Format Requirements:</h3>
+              <ul className="text-sm text-gray-600 space-y-1 list-disc list-inside">
+                <li>Excel (.xlsx, .xls) or CSV (.csv) format</li>
+                <li>First row must contain column headers</li>
+                <li>Each row represents one Control or ET item</li>
+                <li>System will auto-detect type based on columns</li>
+              </ul>
+            </div>
           </div>
-        </>
-      ) : null}
+        )}
+
+        {/* Results Section */}
+        {result && (
+          <div className="space-y-6">
+            {/* Summary Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="bg-white rounded-lg shadow p-6">
+                <div className="text-sm text-gray-500 mb-1">Total Items</div>
+                <div className="text-3xl font-bold text-gray-900">{result.summary.total}</div>
+              </div>
+              <div className="bg-white rounded-lg shadow p-6">
+                <div className="text-sm text-gray-500 mb-1">Processed</div>
+                <div className="text-3xl font-bold text-green-600">{result.summary.processed}</div>
+              </div>
+              <div className="bg-white rounded-lg shadow p-6">
+                <div className="text-sm text-gray-500 mb-1">Errors</div>
+                <div className="text-3xl font-bold text-red-600">{result.summary.errors}</div>
+              </div>
+              <div className="bg-white rounded-lg shadow p-6">
+                <div className="text-sm text-gray-500 mb-1">Avg Score</div>
+                <div className="text-3xl font-bold text-blue-600">{result.summary.avgScore.toFixed(2)}</div>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex gap-4">
+              <button
+                onClick={handleExport}
+                className="flex-1 bg-green-600 text-white py-3 px-4 rounded font-semibold hover:bg-green-700"
+              >
+                Export to Excel
+              </button>
+              <button
+                onClick={handleReset}
+                className="flex-1 bg-gray-600 text-white py-3 px-4 rounded font-semibold hover:bg-gray-700"
+              >
+                Process Another File
+              </button>
+            </div>
+
+            {/* Results Table */}
+            <div>
+              <h2 className="text-xl font-semibold mb-4">Results</h2>
+              <ResultsTable 
+                items={result.items} 
+                onViewDetails={setSelectedItem}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Details Modal */}
+        <DetailsModal 
+          item={selectedItem}
+          onClose={() => setSelectedItem(null)}
+        />
+      </div>
     </div>
   );
 }

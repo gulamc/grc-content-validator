@@ -1,0 +1,4 @@
+{
+  "/api/controls/score/route": "app/api/controls/score/route.js",
+  "/controls/page": "app/controls/page.js"
+}

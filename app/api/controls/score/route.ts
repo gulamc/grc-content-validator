@@ -1,19 +1,26 @@
-import { NextResponse } from 'next/server';
-import { scoreControl } from '@/scorer/controls';
+// app/api/control/score/route.ts
+import { NextRequest, NextResponse } from "next/server";
+import { scoreControl, ControlInput } from "@/scorer/controls";
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const items = Array.isArray(body?.items) ? body.items : [body];
-    const results = items.map((it) => scoreControl({
-      id: it.id || '',
-      name: it.name || '',
-      description: it.description || '',
-      guidance: it.guidance || '',
-      framework: it.framework || ''
-    }));
-    return NextResponse.json({ standard_version: 'v1', results });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message || 'Invalid request' }, { status: 400 });
+    
+    const input: ControlInput = {
+      id: body.id || "",
+      name: body.name || "",
+      description: body.description || "",
+      guidance: body.guidance || "",
+      framework: body.framework || ""
+    };
+    
+    const result = scoreControl(input);
+    
+    return NextResponse.json(result);
+  } catch (error: any) {
+    return NextResponse.json(
+      { error: error.message || "Scoring failed" },
+      { status: 500 }
+    );
   }
 }

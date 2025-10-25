@@ -1,0 +1,48 @@
+{
+  "version": "v1.2",
+  "weights": { "what": 0.35, "how": 0.35, "cohesion": 0.15, "clarity": 0.15 },
+  "dimensions": {
+    "what": {
+      "label": "What to Collect",
+      "max": 100,
+      "checks": [
+        { "id": "what.single_focus", "label": "Single focus", "max": 15 },
+        { "id": "what.outcome_phrasing", "label": "Outcome phrasing (present-tense outcome)", "max": 25 },
+        { "id": "what.concise", "label": "Concise", "max": 15 },
+        { "id": "what.no_artifact_leakage", "label": "Artifact leakage (none)", "max": 15 },
+        { "id": "what.role_aware_scope", "label": "Role-aware scope (no cross-department mixing)", "max": 15 },
+        { "id": "what.tech_agnostic", "label": "Technology-agnostic", "max": 15 }
+      ]
+    },
+    "how": {
+      "label": "How to Collect (artifacts)",
+      "max": 100,
+      "checks": [
+        { "id": "how.tangible_artifacts", "label": "Tangible artifacts present", "max": 50 },
+        { "id": "how.role_neutral", "label": "Role-neutral wording", "max": 10 },
+        { "id": "how.structure_bonus", "label": "Structure (bonus)", "max": 5, "bonus": true },
+        { "id": "how.valid_methods", "label": "Valid collection methods", "max": 15 },
+        { "id": "how.tech_agnostic", "label": "Technology-agnostic", "max": 10 },
+        { "id": "how.avoid_framework_tiein", "label": "Avoid framework tie-in", "max": 5 },
+        { "id": "how.no_impl_steps", "label": "No implementation steps (belongs in control guidance)", "max": 5 }
+      ]
+    },
+    "cohesion": {
+      "label": "Cohesion",
+      "max": 100,
+      "checks": [
+        { "id": "coh.what_how_alignment", "label": "What ↔ How alignment (artifacts support the outcome)", "max": 50 },
+        { "id": "coh.owner_system_time_overlap", "label": "Owner/System/Time consistency", "max": 50 }
+      ]
+    },
+    "clarity": {
+      "label": "Clarity & Readability",
+      "max": 100,
+      "checks": [
+        { "id": "clarity.plain_language", "label": "Plain language & no vague terms", "max": 35 },
+        { "id": "clarity.no_jargon", "label": "No unnecessary jargon", "max": 30 },
+        { "id": "clarity.grammar_style", "label": "Grammar / readability", "max": 35 }
+      ]
+    }
+  }
+}
