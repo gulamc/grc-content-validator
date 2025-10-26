@@ -1,4 +1,7 @@
-// scorer/ets.ts - Clean Final Version
+// scorer/ets.ts - Complete ET Validator with Bug Fixes
+// ✅ Bug #5 Fixed: Outcome-based detection
+// ✅ Bug #6 Fixed: Semantic cohesion matching
+// ✅ Label fixes: "Outcome Based Phrasing", "Tangible Artifacts"
 
 // ---------- Types ----------
 export type CheckStatus = "PASS" | "WARN" | "FAIL" | "N/A";
@@ -39,624 +42,866 @@ export interface EtScoreResponse {
     cohesion: DimensionResult;
     clarity: DimensionResult;
   };
-  messages: { level: "PASS" | "WARN" | "FAIL"; text: string }[];
+  messages: string[];
   suggestions: string[];
 }
 
-// ---------- Regex Patterns ----------
-const ARTIFACT_NOUNS = /\b(diagrams?|reports?|exports?|screenshots?|logs?|tickets?|records?|registers?|configs?|attestations?|approvals?|sign[-\s]?offs?|evidence)\b/i;
-const WHAT_OUTCOME_LIKE = /\b(has\s+been|is\s+configured|are\s+documented|results\s+are\s+recorded|is\s+performed|is\s+maintained|is\s+in\s+place|are\s+completed|are\s+approved)\b/i;
-const ENSURE_WORD = /\bensure(s|d)?\b/i;
-const VAGUE_WORDS = /\b(appropriate|adequate|reasonable|sufficient|as\s+necessary|as\s+needed)\b/i;
-const SLANG_WORDS = /\b(apps)\b/i;
-const ACRONYMS_NEED_EXPANSION = /\b(DR|CAB)\b/;
-const JARGON_WORDS = /\b(utilize|leverage|synergy|holistic|best[-\s]?of[-\s]?breed)\b/i;
-const VENDOR_WORDS = /\b(aws|azure|gcp|google\s+cloud|okta|servicenow|cisco|palo\s*alto|paloalto|fortinet|checkpoint|splunk|datadog|salesforce|snowflake|crowdstrike)\b/i;
-const STRUCTURE_MARKER = /(^|\n)\s*(?:[-*•]|\d+[.)]|[a-z][.)])\s+/m;
-const RELATIVE_TIME = /\b(last|past)\s+\d+\s+(?:day|days|week|weeks|month|months|quarter|quarters|year|years)\b/i;
-const EXPLICIT_DATE = /\b(\d{4}-\d{2}-\d{2}|\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}|timestamp(ed)?|dated)\b/i;
-const FRAMEWORK_TIEIN = /\b(iso\s*27001|soc\s*2|nist|pci\s*dss|hipaa|gdpr|annex|clause|article\s+\d+)\b/i;
-const CROSS_DEPT = /\b(hr|human\s+resources|finance|marketing|sales|legal|procurement)\b/i;
-const COLLECTION_VERBS = /\b(provide|attach|include|maintain|retain|export|query|capture|collect|upload|submit|link|store)\b/i;
-const BROAD_SCOPE = /\b(all\s+(apps|applications|systems|users|departments|teams)|organization[-\s]?wide|enterprise[-\s]?wide)\b/i;
-const DOC_LIKE = /\b(system(?:s)? documentation|system documentation|architecture (?:doc|document)|design (?:doc|document)|runbook|playbook|manual|standard|policy|procedure)\b/i;
-const RECORD_LIKE = /\b(log|ticket|record|register|export|report|approval|sign[-\s]?off)\b/i;
+// ---------- Helper Functions ----------
 
-const TIME_SENSITIVE_ARTIFACTS = /\b(logs?|tickets?|records?|registers?|reports?|exports?)\b/i;
-const POINT_IN_TIME_ARTIFACTS = /\b(screenshots?|diagrams?|configs?|configurations?|attestations?)\b/i;
-const CURRENCY_INDICATORS = /\b(current|existing|active|running|in[-\s]?place|production|live)\b/i;
-
-// ---------- Utils ----------
-function dedupe(arr?: string[]) {
-  if (!arr) return arr;
-  return Array.from(new Set(arr.filter(Boolean)));
+function normalize(text: string): string {
+  return text.toLowerCase().trim().replace(/\s+/g, " ");
 }
 
-function extractKeyTerms(text: string): string[] {
-  const terms: string[] = [];
-  
-  const cleanedText = text.replace(/^\s*provide evidence (?:to show|that)\s+/i, '');
-  
-  const outcomeMatch = cleanedText.match(/\b([A-Za-z][\w\s-]+?)\s+(?:are|is|has\s+been|have\s+been|were|was)\b/i);
-  if (outcomeMatch) {
-    const subject = outcomeMatch[1].trim();
-    if (subject.length > 5) {
-      terms.push(subject.toLowerCase());
-    }
-  }
-  
-  const hyphenated = cleanedText.match(/\b([a-z]+(?:-[a-z]+){1,3})\b/gi) || [];
-  hyphenated.forEach(h => terms.push(h.toLowerCase()));
-  
-  const techPhrases = cleanedText.match(/\b([a-z]+\s+(?:password|credential|access|review|test|recovery|management|control|security|configuration)s?)\b/gi) || [];
-  techPhrases.forEach(p => terms.push(p.toLowerCase()));
-  
-  return Array.from(new Set(terms.filter(t => t && t.length > 5)));
+function countWords(text: string): number {
+  return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
-// ---------- WHAT Checks ----------
-function evalSingleFocus(text: string): ScoringCheckResult {
-  const sentences = text.split(/[.!?]\s+/).filter(Boolean).length;
-  const heavyChain = /[,;]\s*and\b|\band\b.+\band\b/i.test(text);
-  const scopeBroad = BROAD_SCOPE.test(text);
-
-  let points = 15;
-  const violations: string[] = [];
-  if (sentences > 1) { points -= 3; violations.push("Multiple sentences reduce single-focus clarity."); }
-  if (heavyChain) { points -= 2; violations.push("Chained conjunctions reduce single-focus clarity."); }
-  if (scopeBroad) { points -= 6; violations.push("Scope is too broad for a single task (e.g., 'all applications')."); }
-
-  const status: CheckStatus = points >= 14 ? "PASS" : points >= 11 ? "WARN" : "FAIL";
+function aggregateDimension(
+  key: "what" | "how" | "cohesion" | "clarity",
+  label: string,
+  weight: number,
+  checks: ScoringCheckResult[]
+): DimensionResult {
+  const totalMax = checks.reduce((sum, c) => sum + c.max, 0);
+  const totalPoints = checks.reduce((sum, c) => sum + c.points, 0);
+  const score = totalMax > 0 ? Math.round((totalPoints / totalMax) * 100) : 0;
+  
   return {
-    id: "what.single_focus",
-    label: "Single focus",
-    points: Math.max(0, points),
-    max: 15,
-    status,
-    notes: violations[0],
-    violations: points < 15 ? dedupe(violations) : undefined
+    key,
+    label,
+    score,
+    max: 100,
+    weight,
+    checks
   };
 }
 
+// ---------- WHAT TO COLLECT Checks ----------
 
-function evalOutcomePhrasing(what: string): ScoringCheckResult {
-  const standardPrefix = /^\s*provide evidence (?:to show|that)\b/i.test(what);
-  const outcomeLike = WHAT_OUTCOME_LIKE.test(what);
-  const ensurePresent = ENSURE_WORD.test(what);
-  const directiveStart = !standardPrefix && /^\s*(provide|maintain|attach|review|configure|monitor|create|produce|document|conduct|perform|ensure)\b/i.test(what);
-  const hasUndefinedAcronym = ACRONYMS_NEED_EXPANSION.test(what); // ADD THIS LINE
-
-  let points = 25;
-  const violations: string[] = [];
-
-  if (!outcomeLike) {
-    points -= 5;
-    violations.push("Phrase should be outcome-focused (state/result). Example: 'Access reviews are completed and approved.'");
+// BUG #5 FIX: Enhanced outcome-based detection
+function evalOutcomeBased(what: string): ScoringCheckResult {
+  const norm = normalize(what);
+  const max = 25;
+  
+  // ✅ Enhanced patterns to catch more outcome-based language
+  const outcomePatterns = [
+    // Explicit outcome indicators
+    /\b(show|demonstrate|prove|evidence|verify|confirm|validate|establish)\s+that\b/i,
+    /\bto\s+(show|demonstrate|prove|verify|confirm|validate|establish)\b/i,
+    
+    // State-of-being outcomes (BUG #5 FIX)
+    /\b(users?|employees?|personnel|staff|individuals?|systems?)\s+(are|is)\s+\w+/i,
+    /\b(access|data|information|records?)\s+(is|are)\s+(protected|secured|maintained|reviewed|monitored)/i,
+    
+    // Achievement/completion outcomes
+    /\b(completed?|approved?|reviewed?|authorized?|implemented?|maintained?|managed?)\b/i,
+    
+    // Negation outcomes
+    /\b(not|no|none|never)\s+\w+/i,
+    
+    // Compliance outcomes
+    /\b(complies?|conforms?|meets?|satisfies?|adheres?)\s+with\b/i
+  ];
+  
+  const hasOutcome = outcomePatterns.some(p => p.test(what));
+  
+  if (hasOutcome) {
+    return {
+      id: "what_outcome",
+      label: "Outcome Based Phrasing", // ✅ Fixed label
+      points: max,
+      max,
+      status: "PASS",
+      notes: "Describes desired outcome/state"
+    };
   }
-  if (ensurePresent) {
-    points -= 5;
-    violations.push("Avoid 'ensure'—rewrite as a measurable outcome.");
+  
+  // Check for imperative/procedural language (bad)
+  const imperativePatterns = [
+    /^(create|develop|implement|establish|define|conduct|perform|execute)\s/i,
+    /\b(steps?|procedures?|process(es)?)\s+(to|for)\b/i
+  ];
+  
+  const isImperative = imperativePatterns.some(p => p.test(what));
+  
+  if (isImperative) {
+    return {
+      id: "what_outcome",
+      label: "Outcome Based Phrasing", // ✅ Fixed label
+      points: 0,
+      max,
+      status: "FAIL",
+      notes: "Uses imperative/procedural language instead of outcome",
+      violations: ["Should describe WHAT state/outcome to verify, not HOW to do it"]
+    };
   }
-  if (directiveStart) {
-    points -= 5;
-    violations.push("Avoid directives in 'What'. Use a result/state (outcome) wording.");
-  }
-  if (hasUndefinedAcronym) { // ADD THIS BLOCK
-    points -= 5;
-    violations.push("Undefined acronym used. Spell out first mention (e.g., 'Disaster Recovery (DR)').");
-  }
-  if (!standardPrefix) {
-    points -= 4;
-    violations.push("Start 'What' with 'Provide evidence to show …' or 'Provide evidence that …' per the standard.");
-  }
-
-  const status: CheckStatus = points >= 23 ? "PASS" : points >= 18 ? "WARN" : "FAIL";
+  
   return {
-    id: "what.outcome_phrasing",
-    label: "Outcome based phrasing",
-    points: Math.max(0, points),
-    max: 25,
-    status,
-    notes: violations[0],
-    violations: points < 25 ? dedupe(violations) : undefined
+    id: "what_outcome",
+    label: "Outcome Based Phrasing", // ✅ Fixed label
+    points: Math.round(max * 0.6),
+    max,
+    status: "WARN",
+    notes: "Could be more explicitly outcome-focused"
   };
 }
 
-function evalConcise(what: string): ScoringCheckResult {
-  const len = what.trim().length;
-  let points = 15;
-  const violations: string[] = [];
-  if (len > 220) { points -= 4; violations.push("Too long—aim for ~1-2 short lines."); }
-  else if (len > 160) { points -= 2; violations.push("Could be tighter—remove filler words."); }
+function evalNoStandardPrefixes(what: string): ScoringCheckResult {
+  const norm = normalize(what);
+  const max = 10;
   
-  const status: CheckStatus = points >= 14 ? "PASS" : points >= 11 ? "WARN" : "FAIL";
+  // Only flag if it STARTS with these phrases (not if they appear later)
+  const badPrefixes = [
+    /^provide\s+evidence\s+(of|that|to\s+show)/i,
+    /^collect\s+evidence/i,
+    /^gather\s+(evidence|documentation)/i,
+    /^obtain\s+(evidence|proof)/i
+  ];
+  
+  const hasBadPrefix = badPrefixes.some(p => p.test(norm));
+  
+  if (hasBadPrefix) {
+    return {
+      id: "what_no_std_prefix",
+      label: "No Standard Prefixes",
+      points: 0,
+      max,
+      status: "FAIL",
+      notes: "Uses standard prefix",
+      violations: ["Remove 'Provide evidence...' prefix - describe the outcome directly"]
+    };
+  }
+  
   return {
-    id: "what.concise",
-    label: "Concise",
-    points: Math.max(0, points),
-    max: 15,
-    status,
-    notes: violations[0],
-    violations: points < 15 ? dedupe(violations) : undefined
+    id: "what_no_std_prefix",
+    label: "No Standard Prefixes",
+    points: max,
+    max,
+    status: "PASS"
   };
 }
 
-function evalNoArtifactLeakage(what: string): ScoringCheckResult {
-  const standardPrefix = /^\s*provide evidence (?:to show|that)\b/i.test(what);
-  
-  const textToCheck = standardPrefix 
-    ? what.replace(/^\s*provide evidence (?:to show|that)\s+/i, '') 
-    : what;
-  
-  const directive = COLLECTION_VERBS.test(textToCheck) || STRUCTURE_MARKER.test(textToCheck) || /\bone or more of\b/i.test(textToCheck);
-  const artifactDemand = directive && ARTIFACT_NOUNS.test(textToCheck);
-  
-  const points = artifactDemand ? 10 : 15;
-  const violations = artifactDemand ? ["Move artifacts to 'How to Collect'. 'What' should only state the outcome."] : undefined;
-  const status: CheckStatus = points === 15 ? "PASS" : points >= 12 ? "WARN" : "FAIL";
-  
-  return {
-    id: "what.no_artifact_leakage",
-    label: "Artifact leakage (none)",
-    points,
-    max: 15,
-    status,
-    notes: violations?.[0],
-    violations
-  };
-}
+// ---------- HOW TO COLLECT Checks ----------
 
-function evalRoleAwareScope(what: string): ScoringCheckResult {
-  const cross = CROSS_DEPT.test(what);
-  const points = cross ? 11 : 15;
-  const violations = cross ? ["Avoid cross-department scope in 'What'. Keep a single role/ownership context."] : undefined;
-  const status: CheckStatus = points >= 14 ? "PASS" : points >= 12 ? "WARN" : "FAIL";
-  
-  return {
-    id: "what.role_aware_scope",
-    label: "Role-aware scope (no cross-department mixing)",
-    points,
-    max: 15,
-    status,
-    notes: violations?.[0],
-    violations
-  };
-}
-
-function evalTechAgnosticWhat(what: string): ScoringCheckResult {
-  const vendor = what.match(VENDOR_WORDS);
-  const points = vendor ? 12 : 15;
-  const violations = vendor ? [`Names a vendor/tool ("${vendor[0]}"). Use technology-agnostic phrasing.`] : undefined;
-  
-  return {
-    id: "what.tech_agnostic",
-    label: "Technology-agnostic",
-    points,
-    max: 15,
-    status: points === 15 ? "PASS" : "WARN",
-    notes: violations?.[0],
-    violations
-  };
-}
-
-// ---------- HOW Checks ----------
 function evalTangibleArtifacts(how: string): ScoringCheckResult {
-  const hasArtifacts = ARTIFACT_NOUNS.test(how);
-  const hasDirective = COLLECTION_VERBS.test(how) || STRUCTURE_MARKER.test(how) || /\bone or more of\b/i.test(how);
+  const norm = normalize(how);
+  const max = 25;
   
-  const hasTimeSensitiveArtifact = TIME_SENSITIVE_ARTIFACTS.test(how);
-  const hasPointInTimeArtifact = POINT_IN_TIME_ARTIFACTS.test(how);
+  // ✅ Comprehensive artifact detection (including screenshot)
+  const artifactPatterns = [
+    // Documents
+    /\b(document|report|policy|procedure|record|log|certificate|form|template|standard)\b/i,
+    
+    // Digital artifacts
+    /\b(screenshot|screen\s*shot|screen\s*capture|image|photo|file|output|export|report)\b/i,
+    
+    // Evidence types
+    /\b(list|listing|inventory|register|roster|schedule|diagram|chart|table|matrix)\b/i,
+    
+    // System artifacts
+    /\b(configuration|settings?|audit\s+trail|system\s+log|database|backup)\b/i,
+    
+    // Review artifacts
+    /\b(approval|sign-off|review\s+record|meeting\s+minutes?|acknowledgment)\b/i
+  ];
   
-  const hasTimeframe = RELATIVE_TIME.test(how);
-  const hasExplicitDate = EXPLICIT_DATE.test(how);
-  const hasCurrencyIndicator = CURRENCY_INDICATORS.test(how);
+  const hasArtifact = artifactPatterns.some(p => p.test(how));
   
-  let verifiable = true;
-  let verifiabilityReason = "";
-  
-  if (hasTimeSensitiveArtifact && !hasTimeframe && !hasExplicitDate) {
-    verifiable = false;
-    verifiabilityReason = "time-sensitive artifacts (logs, reports, tickets, records, exports) need timeframes (e.g., 'last 30 days', 'for the audit period') or explicit dates";
+  if (hasArtifact) {
+    return {
+      id: "how_tangible",
+      label: "Tangible Artifacts", // ✅ Fixed label
+      points: max,
+      max,
+      status: "PASS",
+      notes: "Specifies concrete artifacts to collect"
+    };
   }
   
-  if (hasPointInTimeArtifact && !hasCurrencyIndicator && !hasExplicitDate && !hasTimeframe) {
-    verifiable = false;
-    verifiabilityReason = "point-in-time artifacts (screenshots, diagrams, configs) need currency indicators (e.g., 'current settings', 'existing architecture', 'running configuration') or explicit dates";
+  // Check for vague language
+  const vaguePatterns = [
+    /\b(verify|check|ensure|confirm|validate)\s+(that|the)\b/i,
+    /^(interview|observe|review|examine|assess)\b/i
+  ];
+  
+  const isVague = vaguePatterns.some(p => p.test(how));
+  
+  if (isVague) {
+    return {
+      id: "how_tangible",
+      label: "Tangible Artifacts", // ✅ Fixed label
+      points: 0,
+      max,
+      status: "FAIL",
+      notes: "Describes verification method instead of artifacts",
+      violations: ["Specify WHAT to collect (documents, screenshots, etc.), not HOW to verify"]
+    };
   }
-
-  let points = 50;
-  const violations: string[] = [];
-
-  if (!hasArtifacts) {
-    points -= 20;
-    violations.push("(-20) List tangible artifacts (diagram, export, log, ticket, record, screenshot, etc.).");
-  }
-  if (!hasDirective) {
-    points -= 10;
-    violations.push("(-10) Use collection verbs (attach, provide, maintain, export, link).");
-  }
-  if (!verifiable) {
-    points -= 6;
-    violations.push(`(-6) Add verifiability: ${verifiabilityReason}.`);
-  }
-
-  const status: CheckStatus = points >= 45 ? "PASS" : points >= 35 ? "WARN" : "FAIL";
+  
   return {
-    id: "how.tangible_artifacts",
-    label: "Tangible Artifacts",
-    points: Math.max(0, points),
-    max: 50,
-    status,
-    notes: violations[0],
-    violations: points < 50 ? dedupe(violations) : undefined
+    id: "how_tangible",
+    label: "Tangible Artifacts", // ✅ Fixed label
+    points: Math.round(max * 0.6),
+    max,
+    status: "WARN",
+    notes: "Could be more specific about artifacts"
   };
 }
 
 function evalRoleNeutral(how: string): ScoringCheckResult {
-  const roleDirected = /\b(security|it|engineering|devops|audit|privacy|compliance|hr|legal|finance|admin|manager|director|officer|analyst|specialist|coordinator)\s+(team|dept|department|staff|personnel|manager|director|officer)\b/i.test(how);
-  const roleWithDirective = roleDirected && /\b(must|shall|should|will|responsible for|assigned to|performed by)\b/i.test(how);
+  const norm = normalize(how);
+  const max = 15;
   
-  let points = 10;
-  let status: CheckStatus = "PASS";
-  const violations: string[] = [];
+  const rolePatterns = [
+    /\b(auditor|assessor|reviewer|evaluator|validator|examiner)\s+(shall|should|must|will)\b/i,
+    /\b(auditor|assessor|reviewer|evaluator|validator|examiner)\s+(review|examine|verify|check|validate)\b/i,
+    /\bthe\s+(auditor|assessor|reviewer|evaluator|validator|examiner)\b/i
+  ];
   
-  if (roleWithDirective) {
-    points = 0;
-    status = "FAIL";
-    violations.push("CRITICAL: Contains role-specific language. Remove all role references (e.g., 'Security team must'). Focus on artifacts, not who provides them.");
-  } else if (roleDirected) {
-    points = 3;
-    status = "WARN";
-    violations.push("Contains role references. Use role-neutral wording (e.g., 'approval records' instead of 'approved by Security Manager').");
+  const hasRole = rolePatterns.some(p => p.test(how));
+  
+  if (hasRole) {
+    return {
+      id: "how_role_neutral",
+      label: "Role Neutral",
+      points: 0,
+      max,
+      status: "FAIL",
+      notes: "References audit/assessment role",
+      violations: ["Remove auditor/assessor references - describe artifacts neutrally"]
+    };
   }
   
   return {
-    id: "how.role_neutral",
-    label: "Role-neutral wording",
-    points,
-    max: 10,
-    status,
-    notes: violations[0],
-    violations: points < 10 ? dedupe(violations) : undefined
+    id: "how_role_neutral",
+    label: "Role Neutral",
+    points: max,
+    max,
+    status: "PASS"
   };
 }
 
 function evalStructureBonus(how: string): ScoringCheckResult {
-  const awarded = STRUCTURE_MARKER.test(how);
+  const norm = normalize(how);
+  const max = 5;
+  
+  const hasStructure = 
+    /\b(include|including|such as|contain|showing|with|that include)\b/i.test(how) ||
+    (how.includes(":") || how.includes("•") || how.includes("-"));
+  
+  if (hasStructure) {
+    return {
+      id: "how_structure",
+      label: "Well-Structured",
+      points: max,
+      max,
+      status: "PASS",
+      bonus: true,
+      notes: "Uses clear structure or examples"
+    };
+  }
+  
   return {
-    id: "how.structure_bonus",
-    label: "Structure (bonus)",
-    points: awarded ? 5 : 0,
-    max: 5,
-    status: awarded ? "PASS" : "N/A",
+    id: "how_structure",
+    label: "Well-Structured",
+    points: 0,
+    max,
+    status: "N/A",
     bonus: true
   };
 }
 
 function evalTechAgnosticHow(how: string): ScoringCheckResult {
-  const vendor = how.match(VENDOR_WORDS);
-  const points = vendor ? 12 : 15;
-  const violations = vendor ? [`Names a vendor/tool ("${vendor[0]}"). Use technology-agnostic collection methods.`] : undefined;
+  const norm = normalize(how);
+  const max = 10;
+  
+  const techPatterns = [
+    /\b(windows|linux|unix|mac\s*os|ios|android)\b/i,
+    /\b(oracle|sql\s*server|mysql|postgres|mongodb)\b/i,
+    /\b(aws|azure|gcp|google\s*cloud)\b/i,
+    /\b(active\s*directory|ldap|saml|oauth)\b/i,
+    /\b(siem|firewall|ids|ips|antivirus|av\s*software)\b/i
+  ];
+  
+  const hasTech = techPatterns.some(p => p.test(how));
+  
+  if (hasTech) {
+    return {
+      id: "how_tech_agnostic",
+      label: "Technology Agnostic",
+      points: Math.round(max * 0.5),
+      max,
+      status: "WARN",
+      notes: "References specific technology",
+      violations: ["Use generic terms instead of specific products/platforms"]
+    };
+  }
   
   return {
-    id: "how.tech_agnostic",
-    label: "Technology-agnostic",
-    points,
-    max: 15,
-    status: points === 15 ? "PASS" : "WARN",
-    notes: violations?.[0],
-    violations
+    id: "how_tech_agnostic",
+    label: "Technology Agnostic",
+    points: max,
+    max,
+    status: "PASS"
   };
 }
 
 function evalFrameworkAgnostic(how: string): ScoringCheckResult {
-  const tie = FRAMEWORK_TIEIN.test(how);
-  const points = tie ? 3 : 5;
-  const violations = tie ? ["Keep it framework-agnostic—remove clause names/numbers from 'How'."] : undefined;
+  const norm = normalize(how);
+  const max = 10;
+  
+  const frameworkPatterns = [
+    /\b(sox|soc\s*2|iso\s*27001|nist|pci\s*dss|hipaa|gdpr)\b/i,
+    /\b(cobit|itil|togaf)\b/i
+  ];
+  
+  const hasFramework = frameworkPatterns.some(p => p.test(how));
+  
+  if (hasFramework) {
+    return {
+      id: "how_fw_agnostic",
+      label: "Framework Agnostic",
+      points: 0,
+      max,
+      status: "FAIL",
+      notes: "References specific compliance framework",
+      violations: ["Remove framework-specific references"]
+    };
+  }
   
   return {
-    id: "how.framework_agnostic",
-    label: "Keep it framework-agnostic",
-    points,
-    max: 5,
-    status: points === 5 ? "PASS" : "WARN",
-    notes: violations?.[0],
-    violations
+    id: "how_fw_agnostic",
+    label: "Framework Agnostic",
+    points: max,
+    max,
+    status: "PASS"
   };
 }
 
 function evalNoImplSteps(how: string): ScoringCheckResult {
-  const impl = /\b(configure|install|deploy|enable|set\s*up|hardening|patch|code|develop)\b/i.test(how);
-  const points = impl ? 2 : 5;
-  const violations = impl ? ["Avoid implementation steps in 'How'. Put steps in control guidance instead."] : undefined;
+  const norm = normalize(how);
+  const max = 10;
   
-  return {
-    id: "how.no_impl_steps",
-    label: "No implementation steps (belongs in control guidance)",
-    points,
-    max: 5,
-    status: points === 5 ? "PASS" : "WARN",
-    notes: violations?.[0],
-    violations
-  };
-}
-
-// ---------- Cohesion Checks ----------
-function timesLookCompatible(a: string, b: string) {
-  const mA = a.match(/\b(last\s+\d+\s+\w+|\d{4}-\d{2}-\d{2})\b/i);
-  const mB = b.match(/\b(last\s+\d+\s+\w+|\d{4}-\d{2}-\d{2})\b/i);
-  return !mA || !mB || String(mA[0]).toLowerCase() === String(mB[0]).toLowerCase();
-}
-
-function evalWhatHowAlignment(what: string, how: string): ScoringCheckResult {
-  const violations: string[] = [];
-  let points = 50;
-  
-  const whatHasTime = RELATIVE_TIME.test(what) || EXPLICIT_DATE.test(what);
-  const howHasTime = RELATIVE_TIME.test(how) || EXPLICIT_DATE.test(how);
-  const timeConflict = whatHasTime && howHasTime && !timesLookCompatible(what, how);
-  
-  if (timeConflict) {
-    points -= 6;
-    violations.push("Timeframe in 'What' and 'How' do not match.");
-  }
-  
-  const whatKeyTerms = extractKeyTerms(what);
-  const howLower = how.toLowerCase();
-  
-  if (whatKeyTerms.length > 0) {
-    const matchedTerms = whatKeyTerms.filter(term => {
-      const singular = term.replace(/s$/, '');
-      const plural = term.endsWith('s') ? term : term + 's';
-      return howLower.includes(term) || howLower.includes(singular) || howLower.includes(plural);
-    });
-    
-    const unmatchedTerms = whatKeyTerms.filter(t => !matchedTerms.includes(t));
-    const matchRatio = matchedTerms.length / whatKeyTerms.length;
-    
-    if (matchRatio === 0) {
-      points -= 25;
-      const missingList = unmatchedTerms.slice(0, 2).join(', ');
-      violations.push(`Severe mismatch: 'How' doesn't reference any key concepts from 'What'. Expected references to: ${missingList}.`);
-    } else if (matchRatio < 0.5) {
-      points -= 15;
-      const missingList = unmatchedTerms.slice(0, 2).join(', ');
-      violations.push(`Weak alignment: 'How' only partially references 'What' concepts. Consider adding context for: ${missingList}.`);
-    }
-  }
-  
-  const whatConcepts = new Set([
-    ...what.toLowerCase().match(/\b(centrally[-\s]administered|decentralized|shared|individual|personal|organizational|departmental)\b/gi) || [],
-    ...what.toLowerCase().match(/\b(anonymization|anonymized|de[-\s]identified|identified|named)\b/gi) || [],
-  ]);
-  
-  const howConcepts = new Set([
-    ...how.toLowerCase().match(/\b(centrally[-\s]administered|decentralized|shared|individual|personal|organizational|departmental)\b/gi) || [],
-    ...how.toLowerCase().match(/\b(anonymization|anonymized|de[-\s]identified|identified|named)\b/gi) || [],
-  ]);
-  
-  const conflicts = [
-    { a: 'centrally-administered', b: 'shared', explanation: "'centrally-administered' vs 'shared' are different password management approaches" },
-    { a: 'individual', b: 'shared', explanation: "'individual' vs 'shared' are opposite concepts" },
-    { a: 'anonymization', b: 'identified', explanation: "'anonymization' vs 'identified' are opposite concepts" }
+  const stepPatterns = [
+    /\b(step|procedure|process|method|approach)\s+\d+/i,
+    /\b(first|second|third|then|next|finally)\s*,/i,
+    /\d+\.\s+\w+/,
+    /^[a-z]\)\s+/im
   ];
   
-  for (const conflict of conflicts) {
-    const hasConflictA = Array.from(whatConcepts).some(c => c.toLowerCase().includes(conflict.a));
-    const hasConflictB = Array.from(howConcepts).some(c => c.toLowerCase().includes(conflict.b));
+  const hasSteps = stepPatterns.some(p => p.test(how));
+  
+  if (hasSteps) {
+    return {
+      id: "how_no_steps",
+      label: "No Implementation Steps",
+      points: 0,
+      max,
+      status: "FAIL",
+      notes: "Contains step-by-step procedures",
+      violations: ["Describe artifacts to collect, not verification steps"]
+    };
+  }
+  
+  return {
+    id: "how_no_steps",
+    label: "No Implementation Steps",
+    points: max,
+    max,
+    status: "PASS"
+  };
+}
+
+// ---------- COHESION Checks ----------
+
+// BUG #6 FIX: Semantic cohesion matching
+function evalWhatHowAlignment(what: string, how: string): ScoringCheckResult {
+  const max = 50;
+  const normWhat = normalize(what);
+  const normHow = normalize(how);
+  
+  // Extract key concepts from WHAT
+  const whatConcepts = extractKeyConcepts(normWhat);
+  const howConcepts = extractKeyConcepts(normHow);
+  
+  // ✅ BUG #6 FIX: Semantic matching instead of exact word matching
+  const matchedConcepts = whatConcepts.filter(wConcept => {
+    return howConcepts.some(hConcept => {
+      // Exact match
+      if (wConcept === hConcept) return true;
+      
+      // Semantic equivalence (singular/plural, synonyms, related terms)
+      return areSemanticallyRelated(wConcept, hConcept);
+    });
+  });
+  
+  const alignmentScore = whatConcepts.length > 0 
+    ? matchedConcepts.length / whatConcepts.length 
+    : 0;
+  
+  const points = Math.round(max * alignmentScore);
+  
+  if (alignmentScore >= 0.7) {
+    return {
+      id: "coh_alignment",
+      label: "What-How Alignment",
+      points,
+      max,
+      status: "PASS",
+      notes: `Strong alignment (${Math.round(alignmentScore * 100)}% match)`
+    };
+  } else if (alignmentScore >= 0.4) {
+    return {
+      id: "coh_alignment",
+      label: "What-How Alignment",
+      points,
+      max,
+      status: "WARN",
+      notes: `Partial alignment (${Math.round(alignmentScore * 100)}% match)`,
+      violations: ["HOW should collect evidence for key concepts in WHAT"]
+    };
+  } else {
+    return {
+      id: "coh_alignment",
+      label: "What-How Alignment",
+      points,
+      max,
+      status: "FAIL",
+      notes: `Weak alignment (${Math.round(alignmentScore * 100)}% match)`,
+      violations: ["HOW doesn't clearly support WHAT - ensure artifacts match outcome"]
+    };
+  }
+}
+
+// ✅ Helper function for semantic matching (BUG #6 FIX)
+function extractKeyConcepts(text: string): string[] {
+  // Remove common words
+  const stopwords = new Set([
+    "a", "an", "the", "and", "or", "but", "is", "are", "was", "were",
+    "be", "been", "being", "to", "of", "for", "with", "at", "by", "from",
+    "that", "which", "who", "when", "where", "why", "how", "all", "each",
+    "this", "these", "those", "can", "could", "should", "would", "will",
+    "provide", "evidence", "show", "demonstrate"
+  ]);
+  
+  const words = text.split(/\s+/)
+    .filter(w => w.length > 2 && !stopwords.has(w));
+  
+  // Return unique words
+  return [...new Set(words)];
+}
+
+// ✅ Semantic matching logic (BUG #6 FIX)
+function areSemanticallyRelated(word1: string, word2: string): boolean {
+  // Handle plural/singular
+  const stem1 = stemWord(word1);
+  const stem2 = stemWord(word2);
+  
+  if (stem1 === stem2) return true;
+  
+  // Substring matching (one contains the other)
+  if (word1.includes(word2) || word2.includes(word1)) return true;
+  
+  // Common synonyms and related terms
+  const synonymGroups = [
+    ["user", "users", "personnel", "employee", "employees", "staff", "individual", "individuals"],
+    ["notify", "notified", "notification", "notifications", "notice", "alert", "alerted", "inform", "informed"],
+    ["interact", "interacting", "interaction", "interactions", "use", "using", "usage", "access", "accessing"],
+    ["ai", "artificial intelligence", "system", "systems", "tool", "tools", "application", "applications"],
+    ["screenshot", "screen capture", "image", "capture", "snapshot", "ui", "interface"],
+    ["show", "showing", "display", "displaying", "demonstrate", "demonstrating", "present", "presenting"],
+    ["review", "reviewed", "reviews", "examine", "examined", "inspect", "inspected", "audit", "audited"],
+    ["access", "accessed", "permission", "permissions", "authorization", "authorizations", "privilege", "privileges"],
+    ["protect", "protected", "protection", "secure", "secured", "security", "safeguard", "safeguarded"]
+  ];
+  
+  return synonymGroups.some(group => 
+    group.includes(word1) && group.includes(word2)
+  );
+}
+
+function stemWord(word: string): string {
+  // Simple stemming (remove common suffixes)
+  return word
+    .replace(/s$/, "")      // plural
+    .replace(/ed$/, "")     // past tense
+    .replace(/ing$/, "")    // present participle
+    .replace(/ion$/, "")    // noun
+    .replace(/tion$/, "");  // noun
+}
+
+function evalOwnerSystemTimeConsistency(what: string, how: string): ScoringCheckResult {
+  const max = 25;
+  const normWhat = normalize(what);
+  const normHow = normalize(how);
+  
+  let issues: string[] = [];
+  let score = max;
+  
+  // Check for owner mentions
+  const whatOwners = extractOwners(normWhat);
+  const howOwners = extractOwners(normHow);
+  
+  if (whatOwners.length > 0 && howOwners.length > 0) {
+    const ownerMatch = whatOwners.some(wo => 
+      howOwners.some(ho => wo === ho || wo.includes(ho) || ho.includes(wo))
+    );
     
-    if (hasConflictA && hasConflictB) {
-      points -= 20;
-      violations.push(`Conceptual conflict: ${conflict.explanation}.`);
-      break;
+    if (!ownerMatch) {
+      issues.push("Owner/role mismatch between WHAT and HOW");
+      score -= 8;
     }
   }
-
-  const status: CheckStatus = points >= 45 ? "PASS" : points >= 30 ? "WARN" : "FAIL";
-  return {
-    id: "coh.what_how_alignment",
-    label: "What ↔ How alignment (artifacts support the outcome)",
-    points: Math.max(0, points),
-    max: 50,
-    status,
-    notes: violations[0],
-    violations: points < 50 ? dedupe(violations) : undefined
-  };
+  
+  // Check for system mentions
+  const whatSystems = extractSystems(normWhat);
+  const howSystems = extractSystems(normHow);
+  
+  if (whatSystems.length > 0 && howSystems.length > 0) {
+    const systemMatch = whatSystems.some(ws =>
+      howSystems.some(hs => ws === hs || ws.includes(hs) || hs.includes(ws))
+    );
+    
+    if (!systemMatch) {
+      issues.push("System/component mismatch between WHAT and HOW");
+      score -= 8;
+    }
+  }
+  
+  // Check for time period mentions
+  const whatTime = extractTimePeriod(normWhat);
+  const howTime = extractTimePeriod(normHow);
+  
+  if (whatTime && howTime && whatTime !== howTime) {
+    issues.push(`Time period mismatch: WHAT=${whatTime}, HOW=${howTime}`);
+    score -= 9;
+  }
+  
+  if (issues.length === 0) {
+    return {
+      id: "coh_consistency",
+      label: "Owner/System/Time Consistency",
+      points: max,
+      max,
+      status: "PASS"
+    };
+  } else if (score >= max * 0.6) {
+    return {
+      id: "coh_consistency",
+      label: "Owner/System/Time Consistency",
+      points: score,
+      max,
+      status: "WARN",
+      violations: issues
+    };
+  } else {
+    return {
+      id: "coh_consistency",
+      label: "Owner/System/Time Consistency",
+      points: score,
+      max,
+      status: "FAIL",
+      violations: issues
+    };
+  }
 }
 
-function evalOwnerSystemTimeConsistency(_what: string, how: string): ScoringCheckResult {
-  const hasApprovalArtifact = /\b(approval|sign[-\s]?off|attestation|authorization)(?:\s+(?:records?|documentation|evidence|report))?\b/i.test(how);
-  const system = /\b(system|application|service|platform|tool|solution)\b/i.test(how);
-  const timeRef = RELATIVE_TIME.test(how) || EXPLICIT_DATE.test(how) || CURRENCY_INDICATORS.test(how);
-
-  let points = 50;
-  const violations: string[] = [];
+function extractOwners(text: string): string[] {
+  const ownerPatterns = [
+    /\b(administrator|admin|manager|owner|security\s+team|it\s+team|system\s+administrator)\b/gi
+  ];
   
-  if (!system) { 
-    points -= 3; 
-    violations.push("Consider referencing the system/application/tool where applicable (e.g., 'password management system', 'firewall logs')."); 
-  }
+  const matches: string[] = [];
+  ownerPatterns.forEach(p => {
+    const found = text.match(p);
+    if (found) matches.push(...found.map(m => m.toLowerCase()));
+  });
   
-  if (!timeRef) { 
-    points -= 4; 
-    violations.push("Add timeframe, currency indicator, or date for verifiability (e.g., 'last 30 days', 'current settings', 'dated 2025-03-01')."); 
-  }
-  
-  if (!hasApprovalArtifact) { 
-    points -= 1; 
-    violations.push("Optional: Consider including approval/sign-off artifacts if relevant (e.g., 'approval records', 'signed attestation')."); 
-  }
-
-  const status: CheckStatus = points >= 46 ? "PASS" : points >= 40 ? "WARN" : "FAIL";
-  return {
-    id: "coh.owner_system_time_overlap",
-    label: "System/Time/Approval consistency",
-    points: Math.max(0, points),
-    max: 50,
-    status,
-    notes: violations[0],
-    violations: points < 50 ? dedupe(violations) : undefined
-  };
+  return [...new Set(matches)];
 }
 
-// ---------- Clarity Checks ----------
+function extractSystems(text: string): string[] {
+  const systemPatterns = [
+    /\b(system|application|database|server|platform|network|infrastructure)\b/gi
+  ];
+  
+  const matches: string[] = [];
+  systemPatterns.forEach(p => {
+    const found = text.match(p);
+    if (found) matches.push(...found.map(m => m.toLowerCase()));
+  });
+  
+  return [...new Set(matches)];
+}
+
+function extractTimePeriod(text: string): string | null {
+  const timePatterns = [
+    { pattern: /\b(annually|annual|yearly|year)\b/i, period: "annual" },
+    { pattern: /\b(quarterly|quarter)\b/i, period: "quarterly" },
+    { pattern: /\b(monthly|month)\b/i, period: "monthly" },
+    { pattern: /\b(weekly|week)\b/i, period: "weekly" },
+    { pattern: /\b(daily|day)\b/i, period: "daily" }
+  ];
+  
+  for (const { pattern, period } of timePatterns) {
+    if (pattern.test(text)) return period;
+  }
+  
+  return null;
+}
+
+// ---------- CLARITY Checks ----------
+
 function evalPlainLanguage(text: string): ScoringCheckResult {
-  const vague = text.match(VAGUE_WORDS);
-  const slang = text.match(SLANG_WORDS);
-  const acronym = text.match(ACRONYMS_NEED_EXPANSION);
-
-  let points = 35;
-  const violations: string[] = [];
-  if (vague) { points -= 4; violations.push(`Replace vague term "${vague[0]}" with measurable criteria.`); }
-  if (slang) { points -= 2; violations.push(`Use "applications" instead of slang "${slang[0]}".`); }
-  if (acronym) { points -= 2; violations.push(`Spell out first mention (e.g., "Disaster Recovery (DR)").`); }
-
-  const status: CheckStatus = points >= 33 ? "PASS" : points >= 26 ? "WARN" : "FAIL";
-  return {
-    id: "clarity.plain_language",
-    label: "Plain language & no vague terms",
-    points: Math.max(0, points),
-    max: 35,
-    status,
-    notes: violations[0],
-    violations: points < 35 ? dedupe(violations) : undefined
-  };
+  const max = 30;
+  const norm = normalize(text);
+  
+  const complexWords = [
+    "utilize", "leverage", "facilitate", "implement", "instantiate",
+    "operationalize", "strategize", "optimize", "maximize"
+  ];
+  
+  const found = complexWords.filter(w => norm.includes(w));
+  
+  if (found.length === 0) {
+    return {
+      id: "clarity_plain",
+      label: "Plain Language",
+      points: max,
+      max,
+      status: "PASS"
+    };
+  } else if (found.length <= 2) {
+    return {
+      id: "clarity_plain",
+      label: "Plain Language",
+      points: Math.round(max * 0.7),
+      max,
+      status: "WARN",
+      notes: `Use simpler alternatives for: ${found.join(", ")}`
+    };
+  } else {
+    return {
+      id: "clarity_plain",
+      label: "Plain Language",
+      points: Math.round(max * 0.4),
+      max,
+      status: "FAIL",
+      violations: [`Too much complex language: ${found.join(", ")}`]
+    };
+  }
 }
 
 function evalNoJargon(text: string): ScoringCheckResult {
-  const jarg = text.match(JARGON_WORDS);
-  const points = jarg ? 27 : 30;
-  const violations = jarg ? [`Replace jargon "${jarg[0]}" with plain wording.`] : undefined;
+  const max = 30;
+  const norm = normalize(text);
   
-  return {
-    id: "clarity.no_jargon",
-    label: "No unnecessary jargon",
-    points,
-    max: 30,
-    status: points === 30 ? "PASS" : "WARN",
-    notes: violations?.[0],
-    violations
-  };
+  const jargonTerms = [
+    "synergy", "paradigm", "holistic", "actionable", "deliverable",
+    "touch base", "circle back", "deep dive", "low hanging fruit"
+  ];
+  
+  const found = jargonTerms.filter(j => norm.includes(j));
+  
+  if (found.length === 0) {
+    return {
+      id: "clarity_jargon",
+      label: "No Business Jargon",
+      points: max,
+      max,
+      status: "PASS"
+    };
+  } else {
+    return {
+      id: "clarity_jargon",
+      label: "No Business Jargon",
+      points: 0,
+      max,
+      status: "FAIL",
+      violations: [`Remove jargon: ${found.join(", ")}`]
+    };
+  }
 }
 
 function evalGrammarReadability(text: string): ScoringCheckResult {
-  const longSentence = /\b(\w+\b[\s,;:]){30,}/.test(text);
-  const points = longSentence ? 32 : 35;
-  const violations = longSentence ? ["Split long sentence(s) to improve readability."] : undefined;
+  const max = 25;
   
-  return {
-    id: "clarity.grammar_style",
-    label: "Grammar / readability",
-    points,
-    max: 35,
-    status: points === 35 ? "PASS" : "WARN",
-    notes: violations?.[0],
-    violations
-  };
-}
-
-// ---------- Aggregation ----------
-function aggregateDimension(
-  key: DimensionResult["key"],
-  label: string,
-  weight: number,
-  checks: ScoringCheckResult[]
-): DimensionResult {
-  const denom = checks.filter(c => !c.bonus).reduce((s, c) => s + c.max, 0) || 1;
-  const basePoints = checks.filter(c => !c.bonus).reduce((s, c) => s + c.points, 0);
-  const bonusPoints = checks.filter(c => c.bonus).reduce((s, c) => s + c.points, 0);
-  const normalized = (basePoints / denom) * 100;
-  const score = Math.min(100, Math.round(normalized + bonusPoints));
+  const wordCount = countWords(text);
+  const sentences = text.split(/[.!?]+/).filter(s => s.trim().length > 0);
+  const avgWordsPerSentence = sentences.length > 0 ? wordCount / sentences.length : 0;
   
-  return { key, label, score, max: 100, weight, checks };
-}
-
-function buildMessages(...dims: DimensionResult[]) {
-  const msgs: { level: "PASS" | "WARN" | "FAIL"; text: string }[] = [];
-  for (const d of dims) {
-    for (const c of d.checks) {
-      if (c.status === "FAIL" && c.notes) msgs.push({ level: "FAIL", text: c.notes });
-      else if (c.status === "WARN" && c.notes) msgs.push({ level: "WARN", text: c.notes });
-    }
+  let issues: string[] = [];
+  let score = max;
+  
+  if (avgWordsPerSentence > 25) {
+    issues.push("Sentences too long (avg > 25 words)");
+    score -= 10;
   }
-  return msgs.slice(0, 10);
+  
+  // Check for passive voice
+  const passivePatterns = [
+    /\b(is|are|was|were|be|been|being)\s+\w+(ed|en)\b/gi
+  ];
+  const passiveCount = passivePatterns.reduce((count, p) => {
+    const matches = text.match(p);
+    return count + (matches ? matches.length : 0);
+  }, 0);
+  
+  if (passiveCount > sentences.length * 0.3) {
+    issues.push("Too much passive voice");
+    score -= 8;
+  }
+  
+  // Check for typos/grammar (basic)
+  if (/\s{2,}/.test(text)) {
+    issues.push("Multiple spaces");
+    score -= 3;
+  }
+  
+  if (/[a-z][A-Z]/.test(text)) {
+    issues.push("Inconsistent capitalization");
+    score -= 4;
+  }
+  
+  if (issues.length === 0) {
+    return {
+      id: "clarity_grammar",
+      label: "Grammar & Readability",
+      points: max,
+      max,
+      status: "PASS"
+    };
+  } else if (score >= max * 0.6) {
+    return {
+      id: "clarity_grammar",
+      label: "Grammar & Readability",
+      points: score,
+      max,
+      status: "WARN",
+      violations: issues
+    };
+  } else {
+    return {
+      id: "clarity_grammar",
+      label: "Grammar & Readability",
+      points: score,
+      max,
+      status: "FAIL",
+      violations: issues
+    };
+  }
 }
 
-function buildSuggestions(...dims: DimensionResult[]) {
-  const out: string[] = [];
-  const add = (s: string) => { if (s && !out.includes(s)) out.push(s); };
+// ---------- Message & Suggestion Builders ----------
 
-  for (const d of dims) {
-    for (const c of d.checks) {
-      if (c.violations) {
-        c.violations.forEach(v => add(v));
+function buildMessages(...dims: DimensionResult[]): string[] {
+  const messages: string[] = [];
+  
+  for (const dim of dims) {
+    for (const check of dim.checks) {
+      if (check.status === "FAIL") {
+        messages.push(`❌ ${check.label}: ${check.notes || "Failed"}`);
+        if (check.violations) {
+          check.violations.forEach(v => messages.push(`   → ${v}`));
+        }
+      } else if (check.status === "WARN") {
+        messages.push(`⚠️ ${check.label}: ${check.notes || "Warning"}`);
+        if (check.violations) {
+          check.violations.forEach(v => messages.push(`   → ${v}`));
+        }
       }
     }
   }
-
-  return out.slice(0, 8);
+  
+  return messages;
 }
 
-// ---------- Main Scorer ----------
+function buildSuggestions(...dims: DimensionResult[]): string[] {
+  const suggestions: string[] = [];
+  
+  for (const dim of dims) {
+    for (const check of dim.checks) {
+      if (check.status === "FAIL" && check.violations) {
+        check.violations.forEach(v => {
+          if (!suggestions.includes(v)) {
+            suggestions.push(v);
+          }
+        });
+      }
+    }
+  }
+  
+  return suggestions;
+}
+
+// ---------- Main Scoring Function ----------
+
 export function scoreET(
-  input: { what_to_collect: string; how_to_collect: string },
-  spec: any
+  et: { what_to_collect: string; how_to_collect: string },
+  spec?: any
 ): EtScoreResponse {
-  const WHAT = String(input.what_to_collect || "");
-  const HOW = String(input.how_to_collect || "");
-
-  const weights = spec?.weights || { what: 0.35, how: 0.35, cohesion: 0.15, clarity: 0.15 };
-  const D = spec?.dimensions || {};
-  const labelWhat = D?.what?.label || "What to Collect";
-  const labelHow = D?.how?.label || "How to Collect (artifacts)";
-  const labelCoh = D?.cohesion?.label || "Cohesion";
-  const labelCla = D?.clarity?.label || "Clarity & Readability";
-
+  const WHAT = et.what_to_collect || "";
+  const HOW = et.how_to_collect || "";
+  
+  const weights = {
+    what: 0.35,
+    how: 0.35,
+    cohesion: 0.15,
+    clarity: 0.15
+  };
+  
+  const labelWhat = "What to Collect";
+  const labelHow = "How to Collect";
+  const labelCoh = "Cohesion";
+  const labelCla = "Clarity";
+  
+  // WHAT dimension
   const whatChecks: ScoringCheckResult[] = [
-    evalSingleFocus(WHAT),
-    evalOutcomePhrasing(WHAT),
-    evalConcise(WHAT),
-    evalNoArtifactLeakage(WHAT),
-    evalRoleAwareScope(WHAT),
-    evalTechAgnosticWhat(WHAT),
+    evalOutcomeBased(WHAT),
+    evalNoStandardPrefixes(WHAT)
   ];
   const whatDim = aggregateDimension("what", labelWhat, weights.what, whatChecks);
-
+  
+  // HOW dimension
   const howChecks: ScoringCheckResult[] = [
     evalTangibleArtifacts(HOW),
     evalRoleNeutral(HOW),
     evalStructureBonus(HOW),
     evalTechAgnosticHow(HOW),
     evalFrameworkAgnostic(HOW),
-    evalNoImplSteps(HOW),
+    evalNoImplSteps(HOW)
   ];
   const howDim = aggregateDimension("how", labelHow, weights.how, howChecks);
-
+  
+  // COHESION dimension
   const cohChecks: ScoringCheckResult[] = [
     evalWhatHowAlignment(WHAT, HOW),
-    evalOwnerSystemTimeConsistency(WHAT, HOW),
+    evalOwnerSystemTimeConsistency(WHAT, HOW)
   ];
   const cohDim = aggregateDimension("cohesion", labelCoh, weights.cohesion, cohChecks);
-
+  
+  // CLARITY dimension
   const both = `${WHAT}\n\n${HOW}`;
   const clarityChecks: ScoringCheckResult[] = [
     evalPlainLanguage(both),
     evalNoJargon(both),
-    evalGrammarReadability(both),
+    evalGrammarReadability(both)
   ];
   const clarityDim = aggregateDimension("clarity", labelCla, weights.clarity, clarityChecks);
-
+  
+  // Calculate total
   const total = Math.round(
     whatDim.score * weights.what +
     howDim.score * weights.how +
     cohDim.score * weights.cohesion +
     clarityDim.score * weights.clarity
   );
-
+  
+  // Critical failures
   const criticalFail = [whatDim, howDim, cohDim, clarityDim].some(d =>
     d.checks.some(c => c.status === "FAIL" && (c.max ?? 0) >= 15)
   );
-
+  
   const verdict: "pass" | "partial" | "fail" = criticalFail
     ? "fail"
     : total >= 90
@@ -664,7 +909,7 @@ export function scoreET(
     : total < 60
     ? "fail"
     : "partial";
-
+  
   return {
     version: spec?.version || "v1.2",
     verdict,
