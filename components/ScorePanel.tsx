@@ -265,8 +265,6 @@ export default function ScorePanel({ result }: { result: any | null }) {
                     <li key={i} className="text-slate-700">{v}</li>
                   ))}
               </ul>
-
-                ) : null}
               </div>
             ))}
           </div>

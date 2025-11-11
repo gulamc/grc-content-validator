@@ -41,13 +41,13 @@ export default function ResultsTable({ items, onViewDetails }: ResultsTableProps
               Type
             </th>
             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Name
+            </th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
               Status
             </th>
             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
               Score
-            </th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Verdict
             </th>
             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
               Actions
@@ -55,61 +55,63 @@ export default function ResultsTable({ items, onViewDetails }: ResultsTableProps
           </tr>
         </thead>
         <tbody className="bg-white divide-y divide-gray-200">
-          {items.map((item, index) => (
-            <tr key={index} className="hover:bg-gray-50">
-              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                {item.id}
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                <span className="px-2 py-1 text-xs font-medium rounded bg-blue-100 text-blue-800">
-                  {item.type.toUpperCase()}
-                </span>
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm">
-                <span className={`px-2 py-1 text-xs font-medium rounded ${getStatusColor(item.status)}`}>
-                  {item.status.toUpperCase()}
-                </span>
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm">
-                {item.score !== undefined && item.score !== null && !isNaN(item.score) ? (
-                  <span className={getScoreColor(item.score)}>
-                    {item.score.toFixed(2)}
+          {items.map((item, index) => {
+            // Extract name from data - handle different naming conventions
+            const name = item.data?.name ||
+                        item.data?.controlName ||
+                        item.data?.control_name ||
+                        item.data?.['Control Name'] ||
+                        item.data?.whatToCollect ||
+                        item.data?.what_to_collect ||
+                        item.data?.['What to Collect'] ||
+                        'N/A';
+
+            return (
+              <tr key={index} className="hover:bg-gray-50">
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                  {item.id}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  <span className="px-2 py-1 text-xs font-medium rounded bg-blue-100 text-blue-800">
+                    {item.type.toUpperCase()}
                   </span>
-                ) : (
-                  <span className="text-gray-400">—</span>
-                )}
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm">
-                {item.scoreDetails?.verdict ? (
-                  <span className={`px-2 py-1 text-xs font-medium rounded uppercase ${
-                    item.scoreDetails.verdict.toLowerCase() === 'pass' 
-                      ? 'bg-green-100 text-green-800' 
-                      : 'bg-red-100 text-red-800'
-                  }`}>
-                    {item.scoreDetails.verdict}
+                </td>
+                <td className="px-6 py-4 text-sm text-gray-700 max-w-xs truncate" title={String(name)}>
+                  {String(name).substring(0, 50)}{String(name).length > 50 ? '...' : ''}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                  <span className={`px-2 py-1 text-xs font-medium rounded ${getStatusColor(item.status)}`}>
+                    {item.status.toUpperCase()}
                   </span>
-                ) : (
-                  <span className="text-gray-400">—</span>
-                )}
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm">
-                {item.status === 'success' ? (
-                  <button
-                    onClick={() => onViewDetails(item)}
-                    className="text-blue-600 hover:text-blue-900 font-medium"
-                  >
-                    View Details
-                  </button>
-                ) : item.status === 'error' ? (
-                  <span className="text-red-600 text-xs" title={item.error}>
-                    {item.error?.substring(0, 50)}...
-                  </span>
-                ) : (
-                  <span className="text-gray-400">—</span>
-                )}
-              </td>
-            </tr>
-          ))}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                  {item.score !== undefined && item.score !== null && !isNaN(item.score) ? (
+                    <span className={getScoreColor(item.score)}>
+                      {item.score.toFixed(2)}
+                    </span>
+                  ) : (
+                    <span className="text-gray-400">—</span>
+                  )}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                  {item.status === 'success' ? (
+                    <button
+                      onClick={() => onViewDetails(item)}
+                      className="text-blue-600 hover:text-blue-900 font-medium"
+                    >
+                      View Details
+                    </button>
+                  ) : item.status === 'error' ? (
+                    <span className="text-red-600 text-xs" title={item.error}>
+                      {item.error?.substring(0, 50)}...
+                    </span>
+                  ) : (
+                    <span className="text-gray-400">—</span>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

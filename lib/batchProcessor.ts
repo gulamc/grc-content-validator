@@ -87,18 +87,18 @@ function normalizeKeys(obj: any): any {
 /**
  * Score a single item
  */
-function scoreItem(item: any, type: 'control' | 'et'): { score: number; details: any } {
+async function scoreItem(item: any, type: 'control' | 'et'): Promise<{ score: number; details: any }> {
   const normalized = normalizeKeys(item);
-  
+
   try {
     console.log('Scoring item:', { type, normalized });
-    
+
     let result: any;
-    
+
     if (type === 'control') {
       result = scoreControl(normalized);
     } else {
-      result = scoreET(normalized);
+      result = await scoreET(normalized);
     }
     
     console.log('Score result:', result);
@@ -226,7 +226,7 @@ export async function processBatch(
   // Process each item
   for (const item of batchItems) {
     try {
-      const result = scoreItem(item.data, type);
+      const result = await scoreItem(item.data, type);
       item.score = result.score;
       item.scoreDetails = result.details;
       item.status = 'success';
@@ -267,14 +267,27 @@ export async function processBatch(
  * Export results to Excel
  */
 export function exportToExcel(result: BatchResult, filename: string = 'batch-results.xlsx') {
-  const exportData = result.items.map(item => ({
-    'ID': item.id,
-    'Type': item.type.toUpperCase(),
-    'Status': item.status.toUpperCase(),
-    'Score': item.score !== undefined ? item.score.toFixed(2) : 'N/A',
-    'Verdict': item.scoreDetails?.verdict || 'N/A',
-    'Error': item.error || ''
-  }));
+  const exportData = result.items.map(item => {
+    // Extract name from data - handle different naming conventions
+    const name = item.data?.name ||
+                item.data?.controlName ||
+                item.data?.control_name ||
+                item.data?.['Control Name'] ||
+                item.data?.whatToCollect ||
+                item.data?.what_to_collect ||
+                item.data?.['What to Collect'] ||
+                'N/A';
+
+    return {
+      'ID': item.id,
+      'Type': item.type.toUpperCase(),
+      'Name': String(name),
+      'Status': item.status.toUpperCase(),
+      'Score': item.score !== undefined ? item.score.toFixed(2) : 'N/A',
+      'Verdict': item.scoreDetails?.verdict || 'N/A',
+      'Error': item.error || ''
+    };
+  });
   
   // Add summary sheet
   const summary = [
