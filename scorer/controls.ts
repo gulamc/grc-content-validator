@@ -107,19 +107,47 @@ const ACTION_WORDS = /\b(protection|detection|monitoring|review|assessment|manag
 // ========== ID QUALITY CHECKS (15% weight) ==========
 
 function evalIdStructured(id: string): ScoringCheckResult {
-  const hasSeparator = id.includes(".");
-  const points = hasSeparator ? 20 : 12;
-  const violations = hasSeparator ? undefined : ["Use structured format with separator (e.g., GDPR.1.1 or NIST.AC.1)"];
+  // Check for valid format: FRAMEWORK [space] Number (e.g., NIST 1.1, GDPR 2.3)
+  const hasSpaceFormat = /^[A-Z]{2,}\s+\d+(\.\d+)*$/.test(id);
+  
+  // Also accept dot format for backwards compatibility: GDPR.1.1
+  const hasDotFormat = /^[A-Z]{2,}\.\d+(\.\d+)*$/.test(id) || /^\d+\.\d+(\.\d+)*$/.test(id);
+  
+  // Check for invalid characters (underscore, hyphen)
+  const hasInvalidChars = /[_\-]/.test(id);
+  
+  const isValid = (hasSpaceFormat || hasDotFormat) && !hasInvalidChars;
+  
+  if (isValid) {
+    return {
+      id: "id.structured",
+      label: "Proper ID format",
+      points: 50,
+      max: 50,
+      status: "PASS"
+    };
+  }
+  
+  // Build violation message
+  const violations: string[] = [];
+  if (hasInvalidChars) {
+    violations.push("Remove underscores and hyphens");
+  }
+  if (!hasSpaceFormat && !hasDotFormat) {
+    violations.push("Use structured format (e.g., NIST 1.1 or GDPR.1.1)");
+  }
+  
   return {
     id: "id.structured",
-    label: "Structured format (prefix.section.number)",
-    points,
-    max: 20,
-    status: points === 20 ? "PASS" : "WARN",
-    notes: violations?.[0],
-    violations
+    label: "Proper ID format",
+    points: 0,
+    max: 50,
+    status: "FAIL",
+    notes: violations[0],
+    violations: violations.length > 0 ? violations : ["Use structured format (e.g., NIST 1.1 or GDPR.1.1)"]
   };
 }
+
 
 function evalIdLength(id: string): ScoringCheckResult {
   const len = id.length;
@@ -159,16 +187,33 @@ function evalIdUniqueness(id: string): ScoringCheckResult {
 
 function evalNameConcise(name: string): ScoringCheckResult {
   const words = name.trim().split(/\s+/).length;
-  const maxWords = spec.rules.name.concise_max_words || 12;
-  const withinBounds = words > 0 && words <= maxWords;
-  const points = withinBounds ? 25 : words > maxWords ? 15 : 0;
-  const violations = withinBounds ? undefined : words === 0 ? ["Name cannot be empty"] : [`Too verbose (${words} words). Keep under ${maxWords} words.`];
+  const idealMax = 6;  // Ideal: 1-6 words
+  const absMax = 12;   // Absolute max: 12 words
+  
+  let points = 25;
+  let violations: string[] | undefined = undefined;
+  let status: CheckStatus = "PASS";
+  
+  if (words === 0) {
+    points = 0;
+    status = "FAIL";
+    violations = ["Name cannot be empty"];
+  } else if (words > absMax) {
+    points = 10;
+    status = "FAIL";
+    violations = ["Control name is too long"];
+  } else if (words > idealMax) {
+    points = 18;
+    status = "WARN";
+    violations = ["Use short, concise name"];
+  }
+  
   return {
     id: "name.concise",
-    label: "Concise (≤12 words)",
+    label: "Concise",
     points,
     max: 25,
-    status: points === 25 ? "PASS" : points >= 15 ? "WARN" : "FAIL",
+    status,
     notes: violations?.[0],
     violations
   };
@@ -241,6 +286,35 @@ function evalNameRoleNeutral(name: string): ScoringCheckResult {
   };
 }
 
+function evalNameNoModalVerbs(name: string): ScoringCheckResult {
+  const modalPattern = /\b(should|could|may|might|must|shall|ensure|ensures|ensured)\b/gi;
+  const matches = name.match(modalPattern);
+  const found = matches ? Array.from(new Set(matches.map(m => m.toLowerCase()))) : [];
+  
+  if (found.length === 0) {
+    return {
+      id: "name.no_modal_verbs",
+      label: "No modal verbs",
+      points: 25,
+      max: 25,
+      status: "PASS"
+    };
+  }
+  
+  const verbList = found.map(v => `'${v}'`).join(', ');
+  const violation = `Remove modal verbs from name: ${verbList}. Use concise, action-oriented phrasing.`;
+  
+  return {
+    id: "name.no_modal_verbs",
+    label: "No modal verbs",
+    points: 0,
+    max: 25,
+    status: "FAIL",
+    notes: `Found ${found.length} modal verb(s)`,
+    violations: [violation]
+  };
+}
+
 // ========== DESCRIPTION QUALITY CHECKS (30% weight) ==========
 
 function evalDescPresentTense(desc: string): ScoringCheckResult {
@@ -296,17 +370,31 @@ function evalDescPassiveVoice(desc: string): ScoringCheckResult {
 }
 
 function evalDescNoModalVerbs(desc: string): ScoringCheckResult {
-  const hasModal = MODAL_VERBS.test(desc);
-  const points = hasModal ? 0 : 25;
-  const violations = hasModal ? ["Remove modal verbs (should/could/may/must/ensure). State the requirement definitively in present tense."] : undefined;
+  const modalPattern = /\b(should|could|may|might|must|shall|ensure|ensures|ensured)\b/gi;
+  const matches = desc.match(modalPattern);
+  const found = matches ? Array.from(new Set(matches.map(m => m.toLowerCase()))) : [];
+  
+  if (found.length === 0) {
+    return {
+      id: "desc.no_modal_verbs",
+      label: "No modal verbs (present tense state)",
+      points: 25,
+      max: 25,
+      status: "PASS"
+    };
+  }
+  
+  const verbList = found.map(v => `'${v}'`).join(', ');
+  const violation = `Avoid modal verbs: ${verbList}`;
+  
   return {
     id: "desc.no_modal_verbs",
-    label: "No modal verbs (should/must/shall/ensure)",
-    points,
+    label: "No modal verbs (present tense state)",
+    points: 0,
     max: 25,
-    status: points === 25 ? "PASS" : "FAIL",
-    notes: violations?.[0],
-    violations
+    status: "FAIL",
+    notes: `Found ${found.length} modal verb type(s)`,
+    violations: [violation]
   };
 }
 
@@ -369,6 +457,70 @@ function evalDescNoSteps(desc: string): ScoringCheckResult {
   };
 }
 
+// Add these new functions in the Description Quality section
+
+function evalDescNoVagueTerms(desc: string): ScoringCheckResult {
+  const VAGUE_TERMS = /\b(appropriate|adequate|reasonable|sufficient|necessary|relevant|applicable|suitable|proper|effective|as needed|as required|as appropriate|where applicable|timely|periodic|regular|ongoing|continuous|etc|and\/or|various|multiple)\b/gi;
+  
+  const matches = desc.match(VAGUE_TERMS);
+  const found = matches ? Array.from(new Set(matches.map(m => m.toLowerCase()))) : [];
+  
+  if (found.length === 0) {
+    return {
+      id: "desc.no_vague_terms",
+      label: "Avoids vague/ambiguous language",
+      points: 25,
+      max: 25,
+      status: "PASS"
+    };
+  }
+  
+  const points = Math.max(0, 25 - (found.length * 5));
+  const termList = found.map(t => `'${t}'`).join(', ');
+  const violation = `Replace vague terms with specific criteria: ${termList}`;
+  
+  return {
+    id: "desc.no_vague_terms",
+    label: "Avoids vague/ambiguous language",
+    points,
+    max: 25,
+    status: points >= 18 ? "WARN" : "FAIL",
+    notes: `Found ${found.length} vague term(s)`,
+    violations: [violation]
+  };
+}
+
+function evalDescNoVendorNames(desc: string): ScoringCheckResult {
+  const vendorPattern = /\b(aws|azure|gcp|google\s+cloud|okta|servicenow|cisco|palo\s*alto|fortinet|splunk|datadog|salesforce|snowflake|crowdstrike|microsoft|oracle|ibm|sap|active\s+directory)\b/gi;
+  
+  const matches = desc.match(vendorPattern);
+  const found = matches ? Array.from(new Set(matches.map(m => m.toLowerCase()))) : [];
+  
+  if (found.length === 0) {
+    return {
+      id: "desc.no_vendor_names",
+      label: "Technology-agnostic (no vendor names)",
+      points: 25,
+      max: 25,
+      status: "PASS"
+    };
+  }
+  
+  const vendorList = found.map(v => v.toUpperCase()).join(', ');
+  const violation = `Replace vendor/product names with generic terms: ${vendorList}`;
+  
+  return {
+    id: "desc.no_vendor_names",
+    label: "Technology-agnostic (no vendor names)",
+    points: 10,
+    max: 25,
+    status: "WARN",
+    notes: `Found ${found.length} vendor reference(s)`,
+    violations: [violation]
+  };
+}
+
+
 // FIX #1: Change min_words to 20 instead of 25
 // UPDATED: Description word count 20-50 (not 20-120)
 // FIX 1: Change word count to 15-45
@@ -401,8 +553,6 @@ function evalDescWordCount(desc: string): ScoringCheckResult {
 
 // FIX #2: Improved acronym detection - checks both before AND after
 function evalDescStandaloneClarity(desc: string): ScoringCheckResult {
-  const hasVagueTerms = /\b(appropriate|adequate|reasonable|sufficient|proper|effective)\b/i.test(desc);
-  
   // Find acronyms that are NOT expanded anywhere nearby (before or after)
   const acronymPattern = /\b([A-Z]{2,})\b/g;
   const acronyms = desc.match(acronymPattern) || [];
@@ -419,27 +569,27 @@ function evalDescStandaloneClarity(desc: string): ScoringCheckResult {
     }
   }
   
-  let points = 20;
-  const violations: string[] = [];
+  if (unexpandedAcronyms.length === 0) {
+    return {
+      id: "desc.standalone_clarity",
+      label: "Acronyms expanded",
+      points: 20,
+      max: 20,
+      status: "PASS"
+    };
+  }
   
-  if (hasVagueTerms) {
-    points -= 8;
-    violations.push("Avoid vague qualifiers (appropriate/adequate). Be specific about requirements.");
-  }
-  if (unexpandedAcronyms.length > 0) {
-    const acronym = unexpandedAcronyms[0];
-    points -= 5;
-    violations.push(`Expand acronym on first use: "${acronym}" → "Full Term (${acronym})"`);
-  }
+  const acronym = unexpandedAcronyms[0];
+  const violation = `Expand acronym on first use: "${acronym}"`;
   
   return {
     id: "desc.standalone_clarity",
-    label: "Standalone clarity",
-    points: Math.max(0, points),
+    label: "Acronyms expanded",
+    points: 12,
     max: 20,
-    status: points === 20 ? "PASS" : points >= 12 ? "WARN" : "FAIL",
-    notes: violations[0],
-    violations: violations.length > 0 ? dedupe(violations) : undefined
+    status: "WARN",
+    notes: violation,
+    violations: [violation]
   };
 }
 
@@ -467,77 +617,71 @@ function evalGuidancePreamble(guidance: string): ScoringCheckResult {
     };
   }
   
-  // Check if FIRST line starts with a list marker or directive verb
-  const firstLine = lines[0].trim();
-  const startsWithList = /^(?:[-*•]|\d+[.)]|[a-z][.)])\s+/.test(firstLine);
-  const startsWithDirective = /^(deploy|implement|configure|monitor|review|establish|create|maintain|enable)\b/i.test(firstLine);
+  // Enhanced detection - look for what + why indicators
+  const hasPreambleIndicators = 
+    /\b(objective|purpose|goal|aim|intended|benefit|important|ensures?|support|help|allow|enable)\b/i.test(guidance) ||
+    /\b(why|because|in order to|to ensure|to support|to help)\b/i.test(guidance);
   
-  // Extract preamble (text before first list marker)
-  const preambleMatch = guidance.match(/^([\s\S]+?)(?=\n\s*(?:[-*•]|\d+[.)]|[a-z][.)])\s+)/);
-  const preamble = preambleMatch ? preambleMatch[1].trim() : guidance.substring(0, 400);
+  // Check if guidance starts with action steps immediately (bad)
+  const hasActionStepsEarly = /^[1-9ai)]\.?\s+|^[-•]\s+/.test(guidance.trim());
   
-  // ✅ FIXED: More flexible objective detection
-  // NOW ACCEPTS:
-  // - "to establish" (original)
-  // - "should establish", "must define" (modal + verb)
-  // - "aims to", "designed to", etc.
-   const hasObjective = /\b(objective|purpose|goal|aims?\s+to|intended\s+to|designed\s+to|to\s+(?:ensure|establish|support|define|create|maintain|implement)|(?:should|must|will)\s+(?:establish|define|create|ensure|support|maintain|implement))\b/i.test(preamble);
-  // ✅ FIXED: More flexible rationale detection
-  // NOW ACCEPTS:
-  // - "to promote" (original)
-  // - "promotes", "enables", "supports" (standalone verbs)
-  // - "important", "critical", "because" (existing)
-   const hasRationale = /\b(rationale|because|important|critical|necessary|essential|to\s+(?:support|enable|help|allow|protect|prevent|ensure|maintain|promote)|(?:promotes?|enables?|supports?|ensures?|maintains?|helps?|allows?|prevents?|protects?)\b)/i.test(preamble);
-  // Preamble should be substantial (at least 15 words)
-  const preambleWords = preamble.split(/\s+/).length;
-  const hasSubstantialPreamble = preambleWords >= 15;
+  // Check if first 200 chars have explanatory content
+  const firstPart = guidance.substring(0, 200);
+  const hasExplanatoryFirst = hasPreambleIndicators && !hasActionStepsEarly;
   
-  let points = 30;
-  const violations: string[] = [];
-  
-  // If guidance starts with a list or directive, there's no preamble - score 0
-  if (startsWithList || startsWithDirective) {
-    points = 0;
-    violations.push("No preamble found. Begin with 2-3 sentences explaining what this control achieves and why it matters before listing steps.");
+  if (hasExplanatoryFirst) {
     return {
       id: "guid.preamble",
       label: "Preamble (what + why)",
-      points: 0,
+      points: 30,
       max: 30,
-      status: "FAIL",
-      notes: violations[0],
-      violations
+      status: "PASS"
     };
   }
   
-  // Otherwise, evaluate preamble quality
-  if (!hasSubstantialPreamble) {
-    points -= 12;
-    violations.push(`Preamble too brief (${preambleWords} words). Provide at least 2-3 sentences (15+ words) explaining the control's purpose.`);
-  }
-  if (!hasObjective) {
-    points -= 10;
-    violations.push("Preamble must state the objective (what this control achieves)");
-  }
-  if (!hasRationale) {
-    points -= 8;
-    violations.push("Preamble must explain rationale (why this control matters)");
-  }
+  const violations = [
+    "Add preamble before steps: explain what this control achieves and why it matters"
+  ];
   
   return {
     id: "guid.preamble",
     label: "Preamble (what + why)",
-    points: Math.max(0, points),
+    points: hasActionStepsEarly ? 5 : 15,
     max: 30,
-    status: points === 30 ? "PASS" : points >= 20 ? "WARN" : "FAIL",
-    notes: violations[0],
-    violations: violations.length > 0 ? dedupe(violations) : undefined
+    status: "WARN",
+    notes: "Preamble missing or unclear",
+    violations: dedupe(violations)
   };
 }
 
 
 function evalGuidanceStructuredSteps(guidance: string): ScoringCheckResult {
-  const hasStructure = looksStructured(guidance);
+  // Enhanced structure detection - detect ALL formats from standard
+  const formats = {
+    'numbered_paren': /\b\d+\)\s+/g,        // 1) 2) 3)
+    'lettered_paren': /\b[a-z]\)\s+/gi,     // a) b) c)
+    'roman_paren': /\b[ivx]+\)\s+/gi,       // i) ii) iii)
+    'numbered_period': /^\s*\d+\.\s+/gm,    // 1. 2. 3.
+    'lettered_period': /^\s*[a-z]\.\s+/gim, // a. b. c.
+    'bullets': /^\s*[-•]\s+/gm              // - or •
+  };
+  
+  let foundFormats: string[] = [];
+  let hasStructure = false;
+  
+  for (const [format, pattern] of Object.entries(formats)) {
+    const matches = guidance.match(pattern);
+    if (matches && matches.length >= 2) {
+      hasStructure = true;
+      foundFormats.push(format.replace('_', ' '));
+    }
+  }
+  
+  // Fallback to original looksStructured if new detection didn't find anything
+  if (!hasStructure) {
+    hasStructure = looksStructured(guidance);
+  }
+  
   const steps = extractSteps(guidance);
   const stepCount = steps.length;
   const min = spec.rules.guidance.steps_min || 2;
@@ -547,23 +691,16 @@ function evalGuidanceStructuredSteps(guidance: string): ScoringCheckResult {
   const violations: string[] = [];
   
   if (!hasStructure) {
-    points -= 15;
-    violations.push("Format steps as a numbered or bulleted list (e.g., 1. Step one; 2. Step two)");
-  }
-  if (stepCount < min) {
-    points -= 10;
-    violations.push(`Too few steps (${stepCount}). Provide ${min}-${max} actionable steps.`);
-  } else if (stepCount > max) {
-    points -= 8;
-    violations.push(`Too many steps (${stepCount}). Consolidate to ${min}-${max} key steps.`);
+    points = 0;
+    violations.push("Use structured formatting: numbered (1. 2. 3.) or bulleted (• or -) steps");
   }
   
   return {
     id: "guid.structured_steps",
-    label: `Structured steps (${min}-${max})`,
-    points: Math.max(0, points),
+    label: "Structured formatting",
+    points,
     max: 30,
-    status: points === 30 ? "PASS" : points >= 18 ? "WARN" : "FAIL",
+    status: points === 30 ? "PASS" : "FAIL",
     notes: violations[0],
     violations: violations.length > 0 ? dedupe(violations) : undefined
   };
@@ -640,11 +777,35 @@ function evalGuidancePresentActive(guidance: string): ScoringCheckResult {
   // Look for present tense action verbs (imperatives) in the guidance
   const presentImperatives = /\b(implement|configure|review|monitor|document|define|establish|maintain|enable|create|develop|conduct|perform|verify|validate|assess|identify|designate|appoint)\b/i.test(guidance);
   
-  // Check for past tense (wrong)
-  const hasPastTense = /\b(configured|reviewed|implemented|established|created|developed|maintained|enabled|conducted|performed)\b/i.test(guidance);
+  // Find all past participles in the text
+  const pastParticiplePattern = /\b(configured|reviewed|implemented|established|created|developed|maintained|enabled|conducted|performed)\b/gi;
+  const pastMatches = [...guidance.matchAll(pastParticiplePattern)];
+  
+  // Check each match to see if it's preceded by an imperative verb (making it an adjective)
+  // GOOD: "Review implemented controls" - implemented is an adjective after "Review"
+  // BAD: "Controls are implemented" - implemented is a main verb
+  let hasBadPastTense = false;
+  const imperativeVerbs = /\b(implement|configure|review|monitor|document|define|establish|maintain|enable|create|develop|conduct|perform|verify|validate|assess|identify|designate|appoint)\b/i;
+  
+  for (const match of pastMatches) {
+    const matchIndex = match.index!;
+    // Get the text before this past participle (up to 50 chars or previous sentence)
+    const beforeText = guidance.slice(Math.max(0, matchIndex - 50), matchIndex);
+    
+    // Check if there's an imperative verb in the text before this past participle
+    // Also check there's no sentence boundary (period, semicolon) between them
+    const hasImperativeBefore = imperativeVerbs.test(beforeText);
+    const hasSentenceBoundary = /[.;]\s*\w+\s*$/.test(beforeText);
+    
+    // If no imperative before, OR there's a sentence boundary, this is likely a verb (bad)
+    if (!hasImperativeBefore || hasSentenceBoundary) {
+      hasBadPastTense = true;
+      break;
+    }
+  }
   
   // Check for passive voice in guidance (wrong - should be active imperatives)
-  const hasPassive = /\b(is|are|be)\s+(?:configured|reviewed|implemented|established|maintained|enabled|conducted|performed)\b/i.test(guidance);
+  const hasPassive = /\b(is|are|be|was|were)\s+(?:configured|reviewed|implemented|established|maintained|enabled|conducted|performed)\b/i.test(guidance);
   
   let points = 20;
   const violations: string[] = [];
@@ -653,7 +814,7 @@ function evalGuidancePresentActive(guidance: string): ScoringCheckResult {
     points -= 10;
     violations.push("Use present tense action verbs (e.g., 'Configure...', 'Review...', 'Monitor...')");
   }
-  if (hasPastTense) {
+  if (hasBadPastTense) {
     points -= 8;
     violations.push("Avoid past tense (e.g., 'configured'). Use present tense imperatives (e.g., 'Configure')");
   }
@@ -802,7 +963,8 @@ export function scoreControl(item: ControlInput): ControlScoreResponse {
     evalNameConcise(name),
     evalNameActionOriented(name),
     evalNamePurposeClarity(name),
-    evalNameRoleNeutral(name)
+    evalNameRoleNeutral(name),
+    evalNameNoModalVerbs(name)
   ];
   const nameDim = aggregateDimension("name_quality", "Control Name Quality", 0.15, nameChecks);
   
@@ -812,6 +974,8 @@ export function scoreControl(item: ControlInput): ControlScoreResponse {
     evalDescPassiveVoice(desc),
     evalDescNoModalVerbs(desc),
     evalDescSingleObjective(desc),
+    evalDescNoVagueTerms(desc),         
+    evalDescNoVendorNames(desc),
     evalDescNoSteps(desc),
     evalDescWordCount(desc),
     evalDescStandaloneClarity(desc)

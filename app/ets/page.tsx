@@ -1,7 +1,6 @@
 'use client';
 import React, { useState } from 'react';
-import { scoreET } from '@/scorer/ets';
-import etSpec from '@/specs/ets_standard.v1.2.json';
+import { AIEnhancedSuggestions } from '@/components/AIEnhancedSuggestions';
 
 type EtScoreResponse = any;
 
@@ -12,29 +11,42 @@ export default function ETsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleScore() {
-    if (!what.trim() || !how.trim()) {
-      alert('Please fill in both What and How fields');
-      return;
+async function handleScore() {
+  if (!what.trim() || !how.trim()) {
+    alert('Please fill in both What and How fields');
+    return;
+  }
+
+  setLoading(true);
+  setError(null);
+  try {
+    // ✅ Call the API route instead (runs on server!)
+    const response = await fetch('/api/et/score', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        what_to_collect: what,
+        how_to_collect: how,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status}`);
     }
 
-    setLoading(true);
-    setError(null);
-    try {
-      const scored = scoreET(
-        { what_to_collect: what, how_to_collect: how },
-        etSpec
-      );
-      console.log('Score result:', scored);
-      setResult(scored);
-    } catch (e: any) {
-      console.error('Scoring error:', e);
-      setError(e?.message || 'Scoring failed');
-      setResult(null);
-    } finally {
-      setLoading(false);
-    }
+    const scored = await response.json();
+    console.log('Score result:', scored);
+    setResult(scored);
+  } catch (e: any) {
+    console.error('Scoring error:', e);
+    setError(e?.message || 'Scoring failed');
+    setResult(null);
+  } finally {
+    setLoading(false);
   }
+}
 
   function handleClear() {
     setWhat('');
@@ -139,8 +151,16 @@ export default function ETsPage() {
                   <p className="mt-2 text-sm">Results will appear here</p>
                 </div>
               </div>
-            ) : (
-              <EtScorePanel result={result} />
+              ) : (
+              <div className="space-y-4">
+                <EtScorePanel result={result} />
+                <AIEnhancedSuggestions
+                  what={what}
+                  how={how}
+                  scoreResult={result}
+                  enabled={true}
+                />
+              </div>
             )}
           </div>
         </div>
@@ -207,19 +227,33 @@ function EtScorePanel({ result }: { result: EtScoreResponse }) {
         ))}
       </div>
 
-      {/* Suggestions */}
-      {result.suggestions && result.suggestions.length > 0 && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <h3 className="text-sm font-semibold text-blue-900 mb-2">Suggestions</h3>
-          <ul className="text-sm text-blue-800 space-y-1">
-            {result.suggestions.map((sug: string, i: number) => (
-              <li key={i} className="leading-snug">
-                • {sug}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+        {/* Suggestions */}
+        {result.suggestions && result.suggestions.length > 0 && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <h3 className="text-sm font-semibold text-blue-900 mb-2">Suggestions</h3>
+            <div className="space-y-1">
+              {result.suggestions.map((sug: string, i: number) => {
+                if (sug.startsWith('[HEADER]')) {
+                  return (
+                    <h4 key={i} className="text-blue-600 font-semibold mt-4 mb-2 text-sm first:mt-0">
+                      {sug.replace('[HEADER] ', '')}
+                    </h4>
+                  );
+                }
+                
+                if (sug === '[SPACER]') {
+                  return <div key={i} className="h-3" aria-hidden="true"></div>;
+                }
+                
+                return (
+                  <li key={i} className="ml-6 text-gray-800 list-disc text-sm marker:text-gray-700 leading-snug">
+                    {sug}
+                  </li>
+                );
+              })}
+            </div>
+          </div>
+        )}
     </div>
   );
 }
