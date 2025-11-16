@@ -256,7 +256,7 @@ Example B: Minimal Issues (Don't Force Extra Suggestions)
 
 CONTROL:
 ID: TEST-001
-Name: Risk Response Management
+Name: Risk Treatment
 Description: Risk responses are selected based on risk tolerance
 Guidance: Evaluate responses. Document decisions.
 
