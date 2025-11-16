@@ -62,7 +62,7 @@ export default function DetailsModal({ item, onClose }: DetailsModalProps) {
           {isET ? (
             <>
               {/* Evidence Tasks - Full detailed breakdown */}
-              <EtScorePanel scoreResult={item.scoreDetails} showTitle={false} />
+              <EtScorePanel scoreResult={item.scoreDetails as any} showTitle={false} />
               
               {/* AI-Enhanced Suggestions for ETs */}
               <AIEnhancedSuggestionsControl
@@ -77,7 +77,7 @@ export default function DetailsModal({ item, onClose }: DetailsModalProps) {
           ) : isControl ? (
             <>
               {/* Controls - Full detailed breakdown */}
-              <ControlScorePanel result={item.scoreDetails} />
+              <ControlScorePanel result={item.scoreDetails as any} />
               
               {/* AI-Enhanced Suggestions for Controls */}
               <AIEnhancedSuggestionsControl

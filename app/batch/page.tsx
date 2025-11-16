@@ -2,14 +2,15 @@
 'use client';
 
 import React, { useState } from 'react';
-import { processExcelFile, BatchResults, ContentType } from '@/lib/batchProcessor';
+import { processExcelFile, BatchResults, ContentType, BatchItem } from '@/lib/batchProcessor';
 import ResultsTable from '@/components/batch/ResultsTable';
 import DetailsModal from '@/components/batch/DetailsModal';
 import { FileText, Settings, Upload } from 'lucide-react';
 
 export default function BatchValidatorPage() {
   const [results, setResults] = useState<BatchResults | null>(null);
-  const [selectedItem, setSelectedItem] = useState(null);
+  // const [selectedItem, setSelectedItem] = useState(null);
+  const [selectedItem, setSelectedItem] = useState<BatchItem | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -18,7 +19,8 @@ export default function BatchValidatorPage() {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    await processFile(file, 'et');
+    await processFile(file, 'ET');
+    
   };
 
   // Handler for Controls upload
@@ -26,7 +28,7 @@ export default function BatchValidatorPage() {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    await processFile(file, 'control');
+    await processFile(file, 'Control');
   };
 
   // Common processing logic

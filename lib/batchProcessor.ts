@@ -1,7 +1,7 @@
 // lib/batchProcessor.ts - CASE-INSENSITIVE VERSION
 import * as XLSX from 'xlsx';
-import { scoreControl, ControlScoringResult } from '@/scorer/controls';
-import { scoreET, ETScoringResult } from '@/scorer/ets';
+import { scoreControl, ControlScoreResponse } from '@/scorer/controls';
+import { scoreET, EtScoreResponse } from '@/scorer/ets';
 
 export type ContentType = 'Control' | 'ET';
 
@@ -13,7 +13,7 @@ export interface BatchItem {
   verdict?: 'PASS' | 'FAIL';
   error?: string;
   data: Record<string, any>;
-  scoreDetails?: ControlScoringResult | ETScoringResult;
+  scoreDetails?: ControlScoreResponse | EtScoreResponse;
 }
 
 export interface BatchResults {
@@ -187,9 +187,8 @@ export async function processExcelFile(
           
           // Score using the ET scorer
           const scoreResult = await scoreET({
-            etId: etData.etId,
-            whatToCollect: etData.whatToCollect,
-            howToCollect: etData.howToCollect
+            what_to_collect: etData.whatToCollect,
+            how_to_collect: etData.howToCollect
           });
           
           // Extract overall score
