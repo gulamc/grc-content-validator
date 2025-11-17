@@ -33,7 +33,19 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: node-app
-          path: .
+          path: |
+            .next/
+            node_modules/
+            public/
+            package.json
+            package-lock.json
+            next.config.mjs
+            app/
+            components/
+            lib/
+            scorer/
+            hooks/
+            specs/
 
   deploy:
     runs-on: ubuntu-latest
@@ -62,4 +74,5 @@ jobs:
           app-name: 'content-validator'
           slot-name: 'Production'
           package: .
+
           
