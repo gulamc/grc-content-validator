@@ -29,23 +29,14 @@ jobs:
           npm run build --if-present
           npm run test --if-present
 
+      - name: Zip artifact for deployment
+        run: zip -r node-app.zip .next node_modules public package.json package-lock.json next.config.mjs app components lib scorer hooks specs
+      
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
         with:
           name: node-app
-          path: |
-            .next/
-            node_modules/
-            public/
-            package.json
-            package-lock.json
-            next.config.mjs
-            app/
-            components/
-            lib/
-            scorer/
-            hooks/
-            specs/
+          path: node-app.zip
 
   deploy:
     runs-on: ubuntu-latest
@@ -59,6 +50,9 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: node-app
+          
+      - name: Unzip artifact for deployment
+        run: unzip -q node-app.zip
       
       - name: Login to Azure
         uses: azure/login@v2
@@ -76,3 +70,4 @@ jobs:
           package: .
 
           
+
