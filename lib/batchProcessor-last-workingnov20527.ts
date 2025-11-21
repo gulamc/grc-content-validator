@@ -1,7 +1,7 @@
 // lib/batchProcessor.ts - CASE-INSENSITIVE VERSION
 import * as XLSX from 'xlsx';
 import { scoreControl, ControlScoreResponse } from '@/scorer/controls';
-import { EtScoreResponse } from '@/scorer/ets';
+import { scoreET, EtScoreResponse } from '@/scorer/ets';
 
 export type ContentType = 'Control' | 'ET';
 
@@ -185,31 +185,21 @@ export async function processExcelFile(
             throw new Error('Missing required field: what_to_collect');
           }
           
-          // Score using the ET scorer via API (enables AI semantic matching)
-          const response = await fetch('/api/et/score', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              what_to_collect: etData.whatToCollect,
-              how_to_collect: etData.howToCollect
-            })
+          // Score using the ET scorer
+          const scoreResult = await scoreET({
+            what_to_collect: etData.whatToCollect,
+            how_to_collect: etData.howToCollect
           });
           
-          if (!response.ok) {
-            throw new Error(`Scoring API failed: ${response.status}`);
-          }
-          
-          const scoreResult = await response.json();
-          
-          // Use the scorer's verdict (respects gating logic)
+          // Extract overall score
           const overallScore = scoreResult.total?.score || 0;
-          const verdict = scoreResult.verdict?.toUpperCase() || (overallScore >= 85 ? 'PASS' : 'FAIL');
+          const verdict = overallScore >= 85 ? 'PASS' : 'FAIL';
           
           result = {
             id: etData.etId,
             type: 'ET',
             status: verdict === 'PASS' ? 'pass' : 'fail',
-            score: verdict === 'PASS' ? overallScore : 0, // 0 for failed items (displays as N/A)
+            score: overallScore,
             verdict,
             data: etData,
             scoreDetails: scoreResult

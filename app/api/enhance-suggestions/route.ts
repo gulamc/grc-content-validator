@@ -1,4 +1,6 @@
 // app/api/enhance-suggestions/route.ts
+// FIXED: Clear WHAT vs HOW categorization and forced ordering
+// 
 // ENHANCED with analysis of 2,362 Evidence Tasks from organization's repository
 // 
 // Objective: Help authors and reviewers create HIGH-QUALITY ETs going forward
@@ -15,7 +17,7 @@
 // 8. Domain coverage: data privacy, access control, security, policy, incident response
 // 
 // Focus: Proactive guidance for NEW content, not reactive fixes for OLD content
-// Version: 6.0 - Repository-Enhanced (Forward-Looking)
+// Version: 6.1 - FIXED Ordering (WHAT always first, then HOW)
 // Analysis date: 2025-11-09
 // Dataset: 1,899 clean ETs analyzed to inform best practices
 
@@ -125,21 +127,34 @@ export async function POST(request: Request) {
     // Build prompt with STRICT rules for technology-agnostic, simple, role-neutral language
     const prompt = `You are a GRC (Governance, Risk, Compliance) expert helping improve Evidence Task definitions.
 
-# CRITICAL INSTRUCTION - FOLLOW THIS ORDER
-Address issues in this EXACT priority order:
-1. WHAT dimension issues FIRST (outcome phrasing, modal verbs, vague terms) - COMBINE if they overlap
-2. Missing artifacts (if WHAT requests specific artifact types that HOW doesn't provide)
-3. HOW dimension issues LAST (combine all HOW problems into ONE suggestion)
+# ⚠️ CRITICAL INSTRUCTION - ISSUE CATEGORIES AND ORDER
 
-IMPORTANT: 
-- Do NOT create multiple suggestions for the same dimension
-- If modal verb + vague terms in WHAT result in similar suggested text, COMBINE into ONE WHAT suggestion
-- If you suggest fixing HOW artifacts, do NOT create another suggestion about HOW
-- Each suggestion must address a DIFFERENT issue
+There are ONLY TWO types of issues:
+
+**TYPE 1: WHAT Issues** (Always suggest first if present)
+- Problems with the WHAT field text itself
+- Examples: modal verbs ("ensure"), vague terms ("appropriate"), passive voice, outcome phrasing
+- If WHAT has ANY issues, this MUST be Suggestion #1
+
+**TYPE 2: HOW Issues** (Always suggest second if present)  
+- Everything else, including:
+  * Missing artifacts (WHAT requests lists/reports that HOW doesn't provide)
+  * Technology references (AWS, Okta, etc.)
+  * Implementation language (Configure, deploy, etc.)
+  * Vague terms in HOW
+  * Role references
+- Combine ALL HOW problems into ONE suggestion
+- If HOW has issues, this MUST be Suggestion #2
+
+**MANDATORY ORDERING RULE:**
+If both WHAT and HOW have issues:
+- Suggestion #1: Fix WHAT [whatever the WHAT issues are]
+- Suggestion #2: Fix HOW [combine all HOW issues]
+
+NEVER put HOW suggestions before WHAT suggestions!
 
 # YOUR TASK
-Analyze this Evidence Task and provide 2-3 specific, actionable suggestions for improvement.
-CRITICAL: Combine related issues into holistic fixes. Focus on ARTIFACT GAPS first.
+Analyze this Evidence Task and provide 1-2 specific, actionable suggestions for improvement.
 
 # EVIDENCE TASK TO ANALYZE
 WHAT TO COLLECT (Outcome):
@@ -187,160 +202,22 @@ Keep artifacts simple. Don't add unnecessary detail.
 ✅ CORRECT - Simple:
 "Access reports showing user permissions and approvals"
 
-## Rule 3: NO REDUNDANCY - Combine Related Issues
-When multiple issues affect the SAME section (HOW), combine them into ONE holistic fix.
+## Rule 3: NO REDUNDANCY - Each Suggestion Must Address ONE Category
+- ONE suggestion for WHAT issues (if WHAT has problems)
+- ONE suggestion for HOW issues (if HOW has problems)
+- NEVER create multiple suggestions for the same category
 
-❌ WRONG - Redundant suggestions:
+❌ WRONG - Redundant (both about HOW):
 1. "Remove implementation steps from HOW"
 2. "Make HOW technology-agnostic"  
-3. "Remove vague terms from HOW"
-← All three are fixing HOW! Combine them!
+← Both are HOW issues! Combine into ONE!
 
-✅ CORRECT - ONE Combined Suggestion:
-"Replace HOW section which has multiple issues (implementation steps 'Configure/deploy', technology references 'Okta/AWS IAM', vague terms 'appropriate'). Replace with:
+✅ CORRECT - ONE Combined HOW Suggestion:
+"HOW has multiple issues: implementation steps ('Configure/deploy'), technology references ('Okta/AWS IAM'), vague terms ('appropriate'). Replace with:
 i) Current access reports showing user permissions and approvals
 ii) Current access control configuration showing permission settings"
 
-## Rule 4: Focus on ARTIFACT GAPS (Most Important!)
-The most valuable suggestion is identifying MISSING artifacts that WHAT requests.
-
-Priority order:
-1. **Missing artifact types** (WHAT asks for "list" but HOW doesn't provide) - HIGHEST PRIORITY
-2. Holistic HOW replacement (if multiple issues)
-3. Vague terms in WHAT
-
-Example:
-If WHAT asks for "authorization list" and HOW only mentions generic "reports":
-→ The PRIMARY suggestion should be: "Add the specific list artifacts"
-→ Secondary: Fix other HOW issues in one combined suggestion
-
-## Rule 4: MODAL VERBS and VAGUE TERMS (Critical for Quality)
-Modal verbs and vague terms make ETs unmeasurable and action-focused instead of outcome-focused.
-
-### Modal Verbs Detection (ALL types equally important):
-❌ FORBIDDEN in WHAT and HOW:
-- "ensure", "should", "must" - ALL modal verbs are equally problematic
-- Common patterns to catch:
-  - "ensure that...", "should include", "should provide", "must demonstrate"
-  - "should also", "should contain", "must be", "ensure compliance"
-
-Note: Based on your organization's data, "should" appears frequently (1,249 uses), but ALL modal verbs need equal attention when helping authors write new ETs.
-
-### Vague Terms (from YOUR organization):
-❌ FORBIDDEN - Most common in your ETs:
-- **"relevant"** (124 uses in HOW - very common, often missed)
-- "appropriate" (89 uses)
-- "timely" (37 uses)
-- "necessary" (49 uses)
-- "as applicable" (32 uses)
-- "sufficient", "adequate", "effective", "reasonable"
-
-✅ USE instead: Specific, measurable criteria
-
-## Rule 5: CATCH IMPLEMENTATION STEPS
-If HOW contains implementation language, flag it immediately.
-
-❌ FORBIDDEN Implementation Language (from YOUR organization's patterns):
-- Modal verbs: "ensure" (81 uses), "should" (1,249 uses), "must" (52 uses)
-- Actions: "Configure", "Setup", "Install", "Deploy", "Enable"
-- Process verbs: "Implement" (28 uses), "Establish", "Create" (10 uses), "Perform" (21 uses)
-- Navigation: "Navigate to", "Click", "Go to", "Access settings"
-
-✅ Example:
-If HOW says: "The organization should configure access controls and implement MFA"
-
-Your suggestion: "Remove modal verbs and implementation steps - HOW should describe EVIDENCE to collect, not actions to perform. Replace with: 'Current access control configuration showing MFA settings'"
-
-## Rule 6: ROLE-NEUTRAL Language
-Never specify job titles or team names (from YOUR organization's patterns).
-
-❌ FORBIDDEN (found in your ETs):
-- "auditor" (50 uses), "developer" (56 uses)
-- "administrator" (13 uses), "manager" (12 uses)
-- "engineer", "CISO", "security officer", "IT team", "security team"
-
-✅ USE:
-"authorized personnel", "designated approver", "responsible party"
-
-## Rule 7: FRAMEWORK AWARENESS (NIST, PCI, CMMC, etc.)
-YOUR organization has framework-specific content in many ETs (NIST: 37, PCI: 26, CMMC: 18).
-
-✅ DO NOT PENALIZE if ET contains clearly labeled framework sections like:
-- "** For NIST 800-53**"
-- "For PCI DSS compliance..."
-- "CMMC Level 2 requires..."
-
-These additions provide necessary context and should not be flagged as violations IF clearly labeled.
-
-## Rule 8: SPECIAL PATTERNS TO DETECT
-
-### Pattern A: Artifact in WHAT (18 ETs in your repo)
-If WHAT starts with "Provide screenshot/list/report", flag:
-"WHAT describes artifact type instead of outcome. Move artifact specification to HOW and rewrite WHAT to describe the result to verify."
-
-### Pattern B: Very Long ETs (122 WHAT >500 chars in your repo)
-If WHAT or HOW >500 characters, suggest:
-"Consider breaking this into structured sub-items (i, ii, iii) or multiple focused ETs for better clarity."
-
-### Pattern C: Very Short ETs (26 total in your repo)
-If WHAT or HOW <50 characters, suggest:
-"Add more detail about the outcome/artifacts to provide sufficient context."
-
-### Pattern D: Common Artifact Types (from YOUR organization)
-Your org commonly requests these artifacts - ensure gap detection catches them:
-- Policy (238 requests), Procedure (189), Configuration (128)
-- List (132), Report (98), Log (98), Documentation (96), Record (92)
-- Approval (59), Contract (56), Screenshot (44), Attestation
-
-# COMMON SCENARIOS
-
-## Scenario A: Smart Combining - When HOW Has Multiple Issues
-If HOW says: "The security team should utilize and leverage Okta reports. Configure AWS IAM and deploy appropriate access controls."
-
-Issues detected: Implementation steps + technology names + role-specific + vague terms
-
-🚫 WRONG - 4 separate suggestions:
-1. "Remove implementation steps"
-2. "Remove technology names"
-3. "Use role-neutral language"
-4. "Remove vague terms"
-← Redundant! All fixing the same HOW section!
-
-✅ CORRECT - ONE combined suggestion:
-"Replace HOW section which has multiple issues (implementation steps 'Configure/deploy', technology references 'Okta/AWS IAM', role term 'security team', vague term 'appropriate'). Replace with: Current access reports showing user permissions and approvals"
-
-Why: More efficient to replace the broken HOW entirely than to suggest 4 piecemeal fixes.
-
-## Scenario B: Prioritize Artifact Gaps (Most Important!)
-If WHAT says: "Provide access authorization list" but HOW says: "Review reports"
-
-✅ PRIMARY Suggestion:
-"Add Missing List Artifacts - WHAT requests 'list' but HOW doesn't specify. Add:
-i) List of approved applications  
-ii) List of users with approved access to each application"
-
-Why: The artifact gap is the core issue - fix this first before worrying about other problems.
-
-## Scenario C: Technology-Specific Language (As Part of HOW Replacement)
-If HOW says: "utilize and leverage Okta reports. Configure AWS IAM and deploy appropriate access controls."
-
-🚫 WRONG Suggestion:
-"Replace with: Authorized personnel generate Okta access reports showing user roles and permissions. Maintain AWS IAM policy documentation."
-
-✅ CORRECT Suggestion:
-"Remove all technology-specific references and implementation steps. Replace with:
-i) Current access reports showing user permissions and approvals
-ii) Current access control configuration showing permission settings"
-
-Why: Keeps it technology-agnostic, removes implementation language, and adds "Current" for state artifacts
-
-## Scenario D: Vague Terms in WHAT
-If WHAT says: "ensure all users have reasonable access as necessary"
-
-✅ CORRECT Suggestion:
-"Replace vague terms with measurable outcome: 'users have approved access to applications'"
-
-# CRITICAL: State vs Activity Artifacts
+## Rule 4: State vs Activity Artifacts
 
 **State Artifacts** (snapshots/configuration) need "Current" or "Active":
 - Access reports → "**Current** access reports"
@@ -351,74 +228,48 @@ If WHAT says: "ensure all users have reasonable access as necessary"
 - Access logs → "Access logs **covering the review period**"
 - Change records → "Change records **for the past 90 days**"
 
-# CRITICAL ANTI-REDUNDANCY CHECK
+## Rule 5: MANDATORY Output Format
 
-Before providing your suggestions, check:
-- If you have a suggestion about HOW artifacts (adding lists, reports, etc.), do NOT create another suggestion also about HOW
-- If you have a suggestion about WHAT wording, do NOT create another suggestion also about WHAT
-- Each suggestion must address a DIFFERENT dimension or issue
-
-Example of REDUNDANCY to AVOID:
-❌ Suggestion 1: "Add Missing List Artifacts" (fixes HOW)
-❌ Suggestion 2: "Replace HOW Section" (also fixes HOW)
-← These are REDUNDANT! Combine into ONE HOW suggestion.
-
-✅ CORRECT - NO REDUNDANCY:
-✅ Suggestion 1: "Remove Vague Terms from WHAT" (fixes WHAT)
-✅ Suggestion 2: "Add Missing List Artifacts and Fix HOW" (fixes HOW - combines all HOW issues)
-
-# OUTPUT FORMAT
-
-For each issue (in order):
-
-[Number]) **[Brief issue title]:** [1-2 sentences explaining the problem]
+**If WHAT has issues** (modal verbs, vague terms, passive voice, etc.):
+1) **Fix WHAT Phrasing:** [Explain what's wrong with WHAT]
 
 Ex:
-Current:
-[exact quote]
+Current: [exact WHAT text]
+Suggested: [fixed WHAT text]
+Why: [why this improves measurability/clarity]
 
+**If HOW has issues** (missing artifacts, tech names, implementation steps, etc.):
+2) **HOW has multiple issues:** [List all HOW problems]
+
+Ex:
+Current: [exact HOW text]
 Suggested:
-[exact replacement text - SIMPLE and TECHNOLOGY-AGNOSTIC, add "used by the organization" or similar context where appropriate]
-
-Why:
-[1-2 sentences explaining value]
-
-# CRITICAL: COMBINE OVERLAPPING ISSUES
-
-If multiple WHAT issues (modal verbs, vague terms, outcome phrasing) result in similar text replacements, combine them into ONE suggestion:
-
-❌ WRONG - Separate but overlapping:
-1) Remove vague terms → suggests "users have approved access"
-2) Remove modal verb → suggests "users have approved access" 
-← These overlap! Both suggest same text!
-
-✅ CORRECT - Combined:
-1) Fix WHAT Phrasing: Remove modal verb "ensure" and vague terms "reasonable"/"as necessary" which make the outcome unmeasurable and action-focused instead of result-focused.
+i) [artifact 1]
+ii) [artifact 2]  
+iii) [artifact 3]
+Why: [why this improves completeness/clarity]
 
 # CRITICAL REMINDERS BEFORE YOU RESPOND
 
-1. ✅ **Detect ALL modal verbs equally** - "ensure", "should", "must" are all problematic (not just "should")
+1. ✅ **Detect ALL modal verbs equally** - "ensure", "should", "must" are all problematic
 2. ✅ **"RELEVANT" is a common vague term** - 124 uses in HOW, often missed
-3. ✅ COMBINE overlapping WHAT issues - if modal verb and vague terms both suggest similar text, make ONE suggestion
-4. ✅ Address WHAT dimension issues FIRST (outcome phrasing, modal verbs, vague terms)
-5. ✅ NO REDUNDANCY - Each suggestion must address a DIFFERENT dimension (don't create 2 HOW suggestions)
-6. ✅ FORMAT: Use **Bold Title:** then description (not separate lines)
-7. ✅ For HOW suggestions: Bold "HOW has multiple issues:" not a redundant title
-8. ✅ Add context like "used by the organization" where appropriate
-9. ✅ Detect special patterns: artifact-in-WHAT, very long/short ETs
-10. ✅ Framework awareness: Don't penalize clearly labeled framework sections
-11. ✅ Remove ALL technology names (Microsoft, IAM, Active Directory, AWS, etc.)
-12. ✅ Keep suggestions SIMPLE (don't over-complicate)
-13. ✅ Use role-neutral language ("authorized personnel" not "auditor/developer")
-14. ✅ Provide 2-3 suggestions maximum (quality over quantity)
+3. ✅ **WHAT issues ALWAYS come first** - If WHAT has problems, suggest those first
+4. ✅ **Combine ALL HOW issues** - Missing artifacts, tech names, implementation steps = ONE suggestion
+5. ✅ **NO REDUNDANCY** - Each suggestion must address a DIFFERENT category (WHAT or HOW)
+6. ✅ FORMAT: Use **Bold Title:** then description
+7. ✅ Add context like "used by the organization" where appropriate
+8. ✅ Remove ALL technology names (Microsoft, IAM, Active Directory, AWS, etc.)
+9. ✅ Keep suggestions SIMPLE (don't over-complicate)
+10. ✅ Use role-neutral language ("authorized personnel" not "auditor/developer")
+11. ✅ Provide 1-2 suggestions maximum (WHAT and/or HOW)
 
-# EXAMPLE OF GOOD OUTPUT (Based on YOUR Organization's Patterns)
+# EXAMPLE OF CORRECT OUTPUT
 
 For typical ET from your repository:
 WHAT: "Provide access authorization list for apps to ensure all users have reasonable access as necessary"
 HOW: "The security team should provide relevant Okta reports. Reports must include user access lists. Configure AWS IAM and deploy appropriate access controls."
 
-CORRECT Suggestions (Catches common issues for NEW ETs):
+CORRECT Suggestions (in order):
 
 1) **Fix WHAT Phrasing:** WHAT uses modal verb "ensure" and vague terms "reasonable" and "as necessary" which make it action-focused instead of outcome-focused and cannot be objectively verified.
 
@@ -427,7 +278,7 @@ Current: "Provide access authorization list for apps to ensure all users have re
 Suggested: "Provide evidence to show users have approved access to applications used by the organization"
 Why: Removes modal verb and vague terms, making the outcome measurable and focused on the result to verify.
 
-2) **HOW has multiple issues:** Modal verbs "should" and "must" (all modal verbs are problematic), vague term "relevant" (common issue - 124 uses), role term ("security team"), technology references ("Okta", "AWS IAM"), implementation language ("Configure", "deploy"), and missing list artifacts that WHAT requests.
+2) **HOW has multiple issues:** Modal verbs "should" and "must", vague term "relevant" (common issue - 124 uses), role term ("security team"), technology references ("Okta", "AWS IAM"), implementation language ("Configure", "deploy"), and missing list artifacts that WHAT requests.
 
 Ex:
 Current: "The security team should provide relevant Okta reports. Reports must include user access lists. Configure AWS IAM and deploy appropriate access controls."
@@ -438,13 +289,13 @@ iii) Current access reports showing user permissions and approvals
 Why: Removes ALL modal verbs ("should", "must"), removes "relevant" vague term, uses role-neutral language, removes technology names, removes implementation steps, and provides the specific list artifacts WHAT requests.
 
 Note: 
-- Only 2 suggestions because modal verb + vague terms were COMBINED (both fix WHAT phrasing)
-- HOW suggestion addresses multiple common issues including ALL types of modal verbs
+- WHAT issue suggested FIRST (Suggestion #1)
+- HOW issue suggested SECOND (Suggestion #2)
+- Each addresses a DIFFERENT category
 - Title format: **Bold title:** then description
 - Added "used by the organization" for context
-- Helps authors write better NEW ETs, not just fix old ones
 
-Now provide 2-3 suggestions for the Evidence Task above:`;
+Now provide 1-2 suggestions for the Evidence Task above:`;
 
     // Call Claude
     const client = getAnthropicClient();
@@ -524,7 +375,7 @@ export async function GET() {
   return NextResponse.json({ 
     status: 'ok',
     hasApiKey: !!process.env.ANTHROPIC_API_KEY,
-    version: '5.0-context-aware',
+    version: '6.1-fixed-ordering',
     timestamp: new Date().toISOString()
   });
 }

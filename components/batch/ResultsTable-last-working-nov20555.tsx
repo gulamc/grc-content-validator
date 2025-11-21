@@ -143,13 +143,9 @@ export default function ResultsTable({ results, onViewDetails }: ResultsTablePro
                   {getContentDisplay(item)}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm">
-                  {item.verdict === 'FAIL' ? (
-                    <span className="text-gray-500 font-medium">N/A</span>
-                  ) : (
-                    <span className={getScoreColor(item.score)}>
-                      {item.score.toFixed(1)}
-                    </span>
-                  )}
+                  <span className={getScoreColor(item.score)}>
+                    {item.score.toFixed(1)}
+                  </span>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm">
                   {getVerdictBadge(item.verdict)}

@@ -1,7 +1,7 @@
 // app/batch/page.tsx - EXAMPLE IMPLEMENTATION FOR TWO-BUTTON APPROACH
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 import { processExcelFile, BatchResults, ContentType, BatchItem } from '@/lib/batchProcessor';
 import ResultsTable from '@/components/batch/ResultsTable';
 import DetailsModal from '@/components/batch/DetailsModal';
@@ -13,10 +13,6 @@ export default function BatchValidatorPage() {
   const [selectedItem, setSelectedItem] = useState<BatchItem | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
-  // Refs for file inputs
-  const etFileInputRef = useRef<HTMLInputElement>(null);
-  const controlsFileInputRef = useRef<HTMLInputElement>(null);
 
   // Handler for Evidence Tasks upload
   const handleETUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -91,22 +87,19 @@ export default function BatchValidatorPage() {
                 Supported formats: .xlsx, .xls, .csv
               </p>
 
-              <input
-                ref={etFileInputRef}
-                type="file"
-                accept=".xlsx,.xls,.csv"
-                onChange={handleETUpload}
-                disabled={isProcessing}
-                className="hidden"
-              />
-              <button
-                onClick={() => etFileInputRef.current?.click()}
-                disabled={isProcessing}
-                className="flex items-center justify-center w-full px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed cursor-pointer font-semibold"
-              >
-                <Upload className="w-5 h-5 mr-2" />
-                Upload Evidence Tasks
-              </button>
+              <label className="block">
+                <input
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  onChange={handleETUpload}
+                  disabled={isProcessing}
+                  className="hidden"
+                />
+                <div className="flex items-center justify-center w-full px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 cursor-pointer font-semibold">
+                  <Upload className="w-5 h-5 mr-2" />
+                  Upload Evidence Tasks
+                </div>
+              </label>
             </div>
 
             {/* Controls Card */}
@@ -128,22 +121,19 @@ export default function BatchValidatorPage() {
                 Supported formats: .csv, .xlsx, .xls
               </p>
 
-              <input
-                ref={controlsFileInputRef}
-                type="file"
-                accept=".xlsx,.xls,.csv"
-                onChange={handleControlsUpload}
-                disabled={isProcessing}
-                className="hidden"
-              />
-              <button
-                onClick={() => controlsFileInputRef.current?.click()}
-                disabled={isProcessing}
-                className="flex items-center justify-center w-full px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed cursor-pointer font-semibold"
-              >
-                <Upload className="w-5 h-5 mr-2" />
-                Upload Controls
-              </button>
+              <label className="block">
+                <input
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  onChange={handleControlsUpload}
+                  disabled={isProcessing}
+                  className="hidden"
+                />
+                <div className="flex items-center justify-center w-full px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 cursor-pointer font-semibold">
+                  <Upload className="w-5 h-5 mr-2" />
+                  Upload Controls
+                </div>
+              </label>
             </div>
           </div>
         )}

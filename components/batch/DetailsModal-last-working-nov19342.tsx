@@ -1,4 +1,4 @@
-// components/batch/DetailsModal.tsx - FIXED: ETs now use correct AI component
+// components/batch/DetailsModal.tsx
 'use client';
 
 import React from 'react';
@@ -6,7 +6,6 @@ import { BatchItem } from '@/lib/batchProcessor';
 import { EtScorePanel } from '@/components/EtScorePanel';
 import ControlScorePanel from '@/components/ControlScorePanel';
 import { AIEnhancedSuggestionsControl } from '@/components/AIEnhancedSuggestionsControl';
-import { AIEnhancedSuggestions } from '@/components/AIEnhancedSuggestions';
 
 interface DetailsModalProps {
   item: BatchItem | null;
@@ -65,10 +64,12 @@ export default function DetailsModal({ item, onClose }: DetailsModalProps) {
               {/* Evidence Tasks - Full detailed breakdown */}
               <EtScorePanel scoreResult={item.scoreDetails as any} showTitle={false} />
               
-              {/* AI-Enhanced Suggestions for ETs - FIXED: Now uses correct component */}
-              <AIEnhancedSuggestions
-                what={item.data.whatToCollect || item.data.what_to_collect || ''}
-                how={item.data.howToCollect || item.data.how_to_collect || ''}
+              {/* AI-Enhanced Suggestions for ETs */}
+              <AIEnhancedSuggestionsControl
+                id={item.id}
+                name={item.data.what_to_collect || 'Evidence Task'}
+                description={item.data.whatToCollect || item.data.what_to_collect || ''}
+                guidance={item.data.howToCollect || item.data.how_to_collect || ''}
                 scoreResult={item.scoreDetails}
                 enabled={true}
               />

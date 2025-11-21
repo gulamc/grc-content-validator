@@ -201,15 +201,15 @@ export async function processExcelFile(
           
           const scoreResult = await response.json();
           
-          // Use the scorer's verdict (respects gating logic)
+          // Extract overall score
           const overallScore = scoreResult.total?.score || 0;
-          const verdict = scoreResult.verdict?.toUpperCase() || (overallScore >= 85 ? 'PASS' : 'FAIL');
+          const verdict = overallScore >= 85 ? 'PASS' : 'FAIL';
           
           result = {
             id: etData.etId,
             type: 'ET',
             status: verdict === 'PASS' ? 'pass' : 'fail',
-            score: verdict === 'PASS' ? overallScore : 0, // 0 for failed items (displays as N/A)
+            score: overallScore,
             verdict,
             data: etData,
             scoreDetails: scoreResult
