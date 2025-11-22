@@ -1,0 +1,17 @@
+# Python dependencies for Insights Validator
+
+# Document parsing
+python-docx==1.1.0
+
+# Natural language processing
+language-tool-python==2.8.1
+
+# Text analysis
+textstat==0.7.3
+
+# Regular expressions (stdlib, listed for documentation)
+# re (built-in)
+
+# Testing
+pytest==7.4.3
+pytest-cov==4.1.0
