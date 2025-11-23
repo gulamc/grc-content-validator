@@ -1,300 +1,373 @@
 """
-Structure Validator
+Category 5: Document Structure Validators (10 points)
 
-Validates article structure, flow, and organization.
+Implements:
+- Dimension 30: Standard Structure (8 points)
+- Dimension 31: Quality Checklist Compliance (2 points)
 """
 
-from typing import Dict, List, Any
 import re
+from typing import Dict, List, Any
+from .base import BaseValidator, ValidationResult
 
 
-class StructureValidator:
-    """Validates article structure and organization."""
+class StandardStructureValidator(BaseValidator):
+    """
+    Dimension 30: Standard Structure (8 points)
 
-    def __init__(self):
-        """Initialize the structure validator."""
-        self.category_name = "Structure & Organization"
+    Verifies article has all required structural elements:
+    - Title (clear heading at top)
+    - Overview/Introduction section
+    - Main sections with clear headings
+    - Conclusion section
+    - Logical flow between sections
+    - Clear section delineation
+    """
 
-    def validate(self, document: Dict[str, Any]) -> Dict[str, Any]:
+    def validate(self, article_data: Dict[str, Any]) -> ValidationResult:
         """
-        Validate article structure.
+        Validate document structure.
 
-        Args:
-            document: Parsed document data
-
-        Returns:
-            dict: Category validation result
+        Scoring:
+        - All elements present + logical flow = 8 points
+        - Missing introduction or conclusion = -2 points
+        - Missing clear sections = -2 points
+        - Poor logical flow = -2 points
+        - Minimum score: 0
         """
-        text = document.get('text', '')
-        headings = document.get('headings', [])
-        paragraphs = document.get('paragraphs', [])
-
-        dimensions = [
-            self._validate_heading_hierarchy(headings),
-            self._validate_introduction(paragraphs),
-            self._validate_conclusion(paragraphs),
-            self._validate_flow(text, headings),
-        ]
-
-        total_score = sum(d['score'] for d in dimensions)
-        max_score = sum(d['maxScore'] for d in dimensions)
-
-        return {
-            'name': self.category_name,
-            'dimensions': dimensions,
-            'totalScore': total_score,
-            'maxScore': max_score,
-            'passed': total_score >= max_score * 0.9,
-        }
-
-    def _validate_heading_hierarchy(self, headings: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Validate heading structure and hierarchy."""
+        text = article_data.get('text', '')
         issues = []
-        score = 10
-        max_score = 10
+        score = 8  # Start with full score
+        details = {}
 
-        if not headings:
-            issues.append({
-                'severity': 'error',
-                'message': 'No headings found in document.',
-                'suggestion': 'Add section headings to organize content.',
-            })
-            return {
-                'name': 'Heading Hierarchy',
-                'score': 0,
-                'maxScore': max_score,
-                'issues': issues,
-                'passed': False,
-            }
+        # Extract headings from the document
+        headings = self._extract_headings(text)
+        details['headings_found'] = len(headings)
+        details['headings'] = headings[:10]  # Store first 10 for reference
 
-        # Check for proper heading levels (should start with H1 and not skip levels)
-        levels = [h['level'] for h in headings]
-
-        if levels[0] != 1:
-            issues.append({
-                'severity': 'warning',
-                'message': 'Document does not start with Heading 1.',
-                'suggestion': 'Use Heading 1 for the main title.',
-            })
-            score -= 2
-
-        # Check for skipped heading levels
-        for i in range(len(levels) - 1):
-            if levels[i + 1] > levels[i] + 1:
-                issues.append({
-                    'severity': 'warning',
-                    'message': f'Heading level skipped: {levels[i]} to {levels[i + 1]}',
-                    'location': headings[i + 1]['text'],
-                    'suggestion': 'Use sequential heading levels (H1 → H2 → H3).',
-                })
-                score -= 1
-
-        # Check for descriptive heading text
-        for heading in headings:
-            if len(heading['text'].split()) < 2:
-                issues.append({
-                    'severity': 'info',
-                    'message': f'Very short heading: "{heading["text"]}"',
-                    'suggestion': 'Use descriptive headings that summarize section content.',
-                })
-                score -= 0.5
-
-        return {
-            'name': 'Heading Hierarchy',
-            'score': max(0, score),
-            'maxScore': max_score,
-            'issues': issues,
-            'passed': score >= max_score * 0.9,
-        }
-
-    def _validate_introduction(self, paragraphs: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Validate introduction quality."""
-        issues = []
-        score = 10
-        max_score = 10
-
-        # Get first non-heading paragraph(s) as introduction
-        intro_paragraphs = []
-        for para in paragraphs:
-            if not para.get('is_heading'):
-                intro_paragraphs.append(para)
-                if len(intro_paragraphs) >= 2:
-                    break
-
-        if not intro_paragraphs:
-            issues.append({
-                'severity': 'error',
-                'message': 'No introduction found.',
-                'suggestion': 'Add an engaging introduction that previews the article.',
-            })
-            return {
-                'name': 'Introduction',
-                'score': 0,
-                'maxScore': max_score,
-                'issues': issues,
-                'passed': False,
-            }
-
-        intro_text = ' '.join(p['text'] for p in intro_paragraphs)
-        intro_word_count = len(intro_text.split())
-
-        # Check introduction length
-        if intro_word_count < 50:
-            issues.append({
-                'severity': 'warning',
-                'message': f'Introduction is very short ({intro_word_count} words).',
-                'suggestion': 'Expand introduction to preview key points (50-150 words recommended).',
-            })
-            score -= 3
-        elif intro_word_count > 200:
-            issues.append({
-                'severity': 'info',
-                'message': f'Introduction is lengthy ({intro_word_count} words).',
-                'suggestion': 'Consider condensing introduction to maintain reader engagement.',
-            })
+        # Check for title (should be first heading or clear title at top)
+        has_title = self._check_title(text, headings)
+        if not has_title:
+            issues.append("Missing: Clear title at document top")
             score -= 1
 
-        # Check for hook/engagement
-        hook_patterns = [
-            r'\?',  # Question
-            r'\b(?:imagine|consider|what if)\b',  # Engagement words
-            r'\b(?:surprising|remarkable|critical|essential)\b',  # Compelling adjectives
-        ]
-
-        has_hook = any(re.search(pattern, intro_text, re.IGNORECASE) for pattern in hook_patterns)
-
-        if not has_hook:
-            issues.append({
-                'severity': 'info',
-                'message': 'Introduction could be more engaging.',
-                'suggestion': 'Start with a question, statistic, or compelling statement.',
-            })
-            score -= 1
-
-        return {
-            'name': 'Introduction',
-            'score': max(0, score),
-            'maxScore': max_score,
-            'issues': issues,
-            'passed': score >= max_score * 0.9,
-        }
-
-    def _validate_conclusion(self, paragraphs: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Validate conclusion quality."""
-        issues = []
-        score = 10
-        max_score = 10
-
-        # Get last non-heading paragraph(s) as conclusion
-        conclusion_paragraphs = []
-        for para in reversed(paragraphs):
-            if not para.get('is_heading') and para.get('text', '').strip():
-                conclusion_paragraphs.insert(0, para)
-                if len(conclusion_paragraphs) >= 2:
-                    break
-
-        if not conclusion_paragraphs:
-            issues.append({
-                'severity': 'warning',
-                'message': 'No clear conclusion found.',
-                'suggestion': 'Add a conclusion that summarizes key points or provides next steps.',
-            })
-            return {
-                'name': 'Conclusion',
-                'score': 5,
-                'maxScore': max_score,
-                'issues': issues,
-                'passed': False,
-            }
-
-        conclusion_text = ' '.join(p['text'] for p in conclusion_paragraphs)
-        conclusion_word_count = len(conclusion_text.split())
-
-        # Check conclusion length
-        if conclusion_word_count < 30:
-            issues.append({
-                'severity': 'warning',
-                'message': f'Conclusion is very brief ({conclusion_word_count} words).',
-                'suggestion': 'Expand conclusion to summarize key takeaways.',
-            })
-            score -= 3
-
-        # Check for action/next steps
-        action_patterns = [
-            r'\b(?:next steps?|action|implement|start|begin|consider|recommend)\b',
-            r'\b(?:key takeaway|in conclusion|to summarize|in summary)\b',
-        ]
-
-        has_action = any(re.search(pattern, conclusion_text, re.IGNORECASE) for pattern in action_patterns)
-
-        if not has_action:
-            issues.append({
-                'severity': 'info',
-                'message': 'Conclusion lacks clear next steps or summary.',
-                'suggestion': 'Include actionable next steps or key takeaways.',
-            })
+        # Check for introduction/overview section
+        has_intro = self._check_introduction(text, headings)
+        if not has_intro:
+            issues.append("Missing: Introduction/Overview section")
             score -= 2
 
-        return {
-            'name': 'Conclusion',
-            'score': max(0, score),
-            'maxScore': max_score,
-            'issues': issues,
-            'passed': score >= max_score * 0.9,
-        }
+        # Check for conclusion section
+        has_conclusion = self._check_conclusion(text, headings)
+        if not has_conclusion:
+            issues.append("Missing: Conclusion section")
+            score -= 2
 
-    def _validate_flow(self, text: str, headings: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Validate logical flow and transitions."""
-        issues = []
-        score = 10
-        max_score = 10
+        # Check for clear main sections
+        has_clear_sections = len(headings) >= 3
+        if not has_clear_sections:
+            issues.append("Missing: Clear main sections (need at least 3 sections)")
+            score -= 2
 
-        # Check for transition words/phrases
-        transition_patterns = [
-            r'\b(?:however|therefore|moreover|furthermore|additionally|consequently)\b',
-            r'\b(?:in addition|for example|for instance|as a result|on the other hand)\b',
-            r'\b(?:first|second|third|finally|lastly|meanwhile)\b',
-        ]
+        # Verify heading hierarchy (H1 → H2 → H3)
+        hierarchy_issues = self._check_heading_hierarchy(text)
+        if hierarchy_issues:
+            issues.extend(hierarchy_issues)
+            score -= 1
 
-        transition_count = sum(
-            len(re.findall(pattern, text, re.IGNORECASE))
-            for pattern in transition_patterns
+        # Assess logical flow using Claude API
+        if text.strip():
+            flow_assessment = self._assess_logical_flow(text, headings)
+            if flow_assessment.get('has_issues', False):
+                flow_issues = flow_assessment.get('issues', [])
+                issues.extend([f"Flow issue: {issue}" for issue in flow_issues])
+                score -= 2
+            details['flow_assessment'] = flow_assessment
+
+        # Ensure minimum score of 0
+        score = max(0, score)
+
+        return ValidationResult(
+            dimension_id=30,
+            dimension_name="Standard Structure",
+            score=score,
+            max_score=8,
+            issues=issues,
+            details=details
         )
 
-        paragraphs = text.split('\n\n')
-        if len(paragraphs) > 0:
-            transitions_per_para = transition_count / len(paragraphs)
+    def _extract_headings(self, text: str) -> List[str]:
+        """Extract headings from document text."""
+        headings = []
 
-            if transitions_per_para < 0.2:
-                issues.append({
-                    'severity': 'warning',
-                    'message': 'Limited use of transition words/phrases.',
-                    'suggestion': 'Add transitions to improve flow between ideas.',
-                })
-                score -= 2
+        # Match markdown-style headings (# Heading)
+        md_headings = re.findall(r'^#{1,6}\s+(.+)$', text, re.MULTILINE)
+        headings.extend(md_headings)
 
-        # Check for logical section progression
-        if headings:
-            heading_texts = [h['text'].lower() for h in headings]
+        # Match headings that appear on their own line (likely bold or formatted)
+        # Look for lines that are short, capitalized, and followed by content
+        lines = text.split('\n')
+        for i, line in enumerate(lines):
+            line = line.strip()
+            # Skip if too long (likely not a heading)
+            if len(line) > 100 or len(line) < 3:
+                continue
+            # Check if it looks like a heading (capitalized, maybe ending with colon)
+            if (line[0].isupper() and
+                (line.endswith(':') or
+                 re.match(r'^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*$', line))):
+                headings.append(line.rstrip(':'))
 
-            # Check for conclusion-like heading at the end
-            conclusion_keywords = ['conclusion', 'summary', 'takeaway', 'next steps', 'final']
-            has_conclusion_heading = any(
-                keyword in heading_texts[-1] for keyword in conclusion_keywords
+        return headings
+
+    def _check_title(self, text: str, headings: List[str]) -> bool:
+        """Check if document has a clear title."""
+        if not text.strip():
+            return False
+
+        # Title should be in first few lines
+        first_lines = text.split('\n')[:5]
+        first_text = '\n'.join(first_lines)
+
+        # Check for markdown H1
+        if re.search(r'^#\s+.+', first_text, re.MULTILINE):
+            return True
+
+        # Check if first heading exists
+        if headings and len(headings[0]) > 0:
+            return True
+
+        # Check for a short, capitalized line near the top
+        for line in first_lines:
+            line = line.strip()
+            if 10 <= len(line) <= 100 and line[0].isupper():
+                return True
+
+        return False
+
+    def _check_introduction(self, text: str, headings: List[str]) -> bool:
+        """Check for introduction/overview section."""
+        intro_keywords = [
+            'introduction', 'overview', 'about', 'background',
+            'executive summary', 'summary', 'preface', 'foreword'
+        ]
+
+        # Check headings
+        for heading in headings[:5]:  # Check first 5 headings
+            if any(keyword in heading.lower() for keyword in intro_keywords):
+                return True
+
+        # Check first few paragraphs for introduction-like content
+        first_500 = text[:500].lower()
+        if any(keyword in first_500 for keyword in ['introduction', 'overview', 'this article', 'this document']):
+            return True
+
+        return False
+
+    def _check_conclusion(self, text: str, headings: List[str]) -> bool:
+        """Check for conclusion section."""
+        conclusion_keywords = [
+            'conclusion', 'summary', 'final', 'closing',
+            'recommendations', 'next steps', 'takeaways', 'wrap-up'
+        ]
+
+        # Check headings (especially last few)
+        for heading in headings[-5:]:  # Check last 5 headings
+            if any(keyword in heading.lower() for keyword in conclusion_keywords):
+                return True
+
+        # Check last part of document
+        last_500 = text[-500:].lower()
+        if any(keyword in last_500 for keyword in ['conclusion', 'in summary', 'to conclude', 'in closing']):
+            return True
+
+        return False
+
+    def _check_heading_hierarchy(self, text: str) -> List[str]:
+        """Check if heading hierarchy is logical."""
+        issues = []
+
+        # Extract markdown headings with levels
+        md_pattern = r'^(#{1,6})\s+(.+)$'
+        matches = re.findall(md_pattern, text, re.MULTILINE)
+
+        if not matches:
+            return issues  # No markdown headings, can't check hierarchy
+
+        # Check for heading level jumps (e.g., H1 → H3, skipping H2)
+        prev_level = 0
+        for hashes, content in matches:
+            level = len(hashes)
+            if prev_level > 0 and level > prev_level + 1:
+                issues.append(f"Flow issue: Heading hierarchy jump detected (H{prev_level} → H{level})")
+            prev_level = level
+
+        return issues
+
+    def _assess_logical_flow(self, text: str, headings: List[str]) -> Dict[str, Any]:
+        """
+        Use Claude API to assess logical flow between sections.
+
+        Returns:
+            Dict with 'has_issues' (bool) and 'issues' (list of strings)
+        """
+        # Create a summary of the document structure
+        structure_summary = f"Document has {len(headings)} sections:\n"
+        structure_summary += "\n".join([f"- {h}" for h in headings[:15]])
+
+        # Get first 2000 chars for context
+        text_sample = text[:2000] if len(text) > 2000 else text
+
+        prompt = f"""Analyze this document's logical flow and structure.
+
+Document structure:
+{structure_summary}
+
+Document excerpt:
+{text_sample}
+
+Assess whether the sections follow a logical flow. Consider:
+1. Do sections build on each other logically?
+2. Is there a clear progression from introduction to conclusion?
+3. Are there any abrupt topic changes?
+
+Respond in JSON format:
+{{
+  "has_flow_issues": true/false,
+  "issues": ["issue 1", "issue 2"]
+}}
+
+If the flow is good, set has_flow_issues to false and issues to empty array."""
+
+        try:
+            response = self.call_claude(prompt, max_tokens=500)
+            # Parse JSON response
+            import json
+            # Extract JSON from response (might have markdown code blocks)
+            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            if json_match:
+                result = json.loads(json_match.group())
+                return {
+                    'has_issues': result.get('has_flow_issues', False),
+                    'issues': result.get('issues', [])
+                }
+        except Exception as e:
+            print(f"Warning: Flow assessment failed: {e}")
+
+        # Default to no issues if Claude call fails
+        return {'has_issues': False, 'issues': []}
+
+
+class QualityChecklistValidator(BaseValidator):
+    """
+    Dimension 31: Quality Checklist Compliance (2 points)
+
+    Article must address three key questions:
+    1. Why are we covering this? (relevance/importance)
+    2. Who wants to know? (target audience)
+    3. What do they want to know? (key information)
+    """
+
+    def validate(self, article_data: Dict[str, Any]) -> ValidationResult:
+        """
+        Validate quality checklist compliance.
+
+        Scoring:
+        - Addresses all 3 questions clearly = 2 points
+        - Addresses 2 questions = 1 point
+        - Addresses 0-1 questions = 0 points
+        """
+        text = article_data.get('text', '')
+        issues = []
+        details = {}
+
+        if not text.strip():
+            return ValidationResult(
+                dimension_id=31,
+                dimension_name="Quality Checklist Compliance",
+                score=0,
+                max_score=2,
+                issues=["Empty document"],
+                details=details
             )
 
-            if not has_conclusion_heading and len(headings) > 3:
-                issues.append({
-                    'severity': 'info',
-                    'message': 'No clear conclusion heading found.',
-                    'suggestion': 'Consider adding "Conclusion" or "Key Takeaways" section.',
-                })
-                score -= 1
+        # Use Claude API to assess the three questions
+        assessment = self._assess_quality_questions(text)
 
+        questions_addressed = 0
+        for question, addressed in assessment.items():
+            if addressed:
+                questions_addressed += 1
+            else:
+                issues.append(f"Missing: {question}")
+
+        details['assessment'] = assessment
+        details['questions_addressed'] = questions_addressed
+
+        # Calculate score
+        if questions_addressed == 3:
+            score = 2
+        elif questions_addressed == 2:
+            score = 1
+        else:
+            score = 0
+
+        return ValidationResult(
+            dimension_id=31,
+            dimension_name="Quality Checklist Compliance",
+            score=score,
+            max_score=2,
+            issues=issues,
+            details=details
+        )
+
+    def _assess_quality_questions(self, text: str) -> Dict[str, bool]:
+        """
+        Use Claude API to assess if article addresses the three key questions.
+
+        Returns:
+            Dict mapping each question to whether it's addressed (bool)
+        """
+        # Get first 3000 chars for analysis
+        text_sample = text[:3000] if len(text) > 3000 else text
+
+        prompt = f"""Analyze this article to determine if it clearly addresses these three critical questions:
+
+1. WHY are we covering this? (Does it explain the relevance, importance, or reason for this topic?)
+2. WHO wants to know? (Does it identify or imply the target audience?)
+3. WHAT do they want to know? (Does it deliver the key information the audience needs?)
+
+Article text:
+{text_sample}
+
+Respond in JSON format:
+{{
+  "why_covering": true/false,
+  "who_audience": true/false,
+  "what_information": true/false,
+  "explanation": "Brief explanation of your assessment"
+}}
+
+Be strict in your assessment - only return true if the question is CLEARLY addressed."""
+
+        try:
+            response = self.call_claude(prompt, max_tokens=500)
+            # Parse JSON response
+            import json
+            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            if json_match:
+                result = json.loads(json_match.group())
+                return {
+                    "Why are we covering this? (relevance/importance)": result.get('why_covering', False),
+                    "Who wants to know? (target audience)": result.get('who_audience', False),
+                    "What do they want to know? (key information)": result.get('what_information', False),
+                }
+        except Exception as e:
+            print(f"Warning: Quality checklist assessment failed: {e}")
+
+        # Default to all false if Claude call fails
         return {
-            'name': 'Flow & Transitions',
-            'score': max(0, score),
-            'maxScore': max_score,
-            'issues': issues,
-            'passed': score >= max_score * 0.9,
+            "Why are we covering this? (relevance/importance)": False,
+            "Who wants to know? (target audience)": False,
+            "What do they want to know? (key information)": False,
         }
