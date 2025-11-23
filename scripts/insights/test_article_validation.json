@@ -1,0 +1,138 @@
+{
+  "validation_results": {
+    "total_points_earned": 3.0,
+    "total_points_max": 15.0,
+    "overall_score": 20.0,
+    "passed": false,
+    "categories": [
+      {
+        "category": "Formatting",
+        "category_number": 4,
+        "points_earned": 3.0,
+        "points_max": 15.0,
+        "passed": false,
+        "dimensions": [
+          {
+            "dimension": "Lists",
+            "points_earned": 2.0,
+            "points_max": 3.0,
+            "passed": false,
+            "issues": [
+              "Line 3: Use 'e.g.' instead of 'i.e.' for examples \u2192 Fix: Replace 'i.e.' with 'e.g.'",
+              "Line 9: Use 'e.g.' instead of 'ex:' for examples \u2192 Fix: Replace 'ex:' with 'e.g.'"
+            ]
+          },
+          {
+            "dimension": "Decimals & Fractions",
+            "points_earned": 0,
+            "points_max": 1.0,
+            "passed": false,
+            "issues": [
+              "Line 15: Spell out simple fractions \u2192 Fix: Replace '1/2' with written form (e.g., 'one-half')",
+              "Line 21: Spell out simple fractions \u2192 Fix: Replace '31/12' with written form (e.g., 'one-half')",
+              "Line 15: Use max two decimal places \u2192 Fix: Replace '3.14159265' with '3.14'"
+            ]
+          },
+          {
+            "dimension": "Percentages",
+            "points_earned": 0,
+            "points_max": 1.0,
+            "passed": false,
+            "issues": [
+              "Line 12: No space between number and % \u2192 Fix: Replace '50 %' with '50%'",
+              "Line 12: Use % symbol instead of 'percent' \u2192 Fix: Replace '50 percent' with '50%'"
+            ]
+          },
+          {
+            "dimension": "Ranges & Spans",
+            "points_earned": 0,
+            "points_max": 1.0,
+            "passed": false,
+            "issues": [
+              "Line 15: No spaces around hyphen in ranges \u2192 Fix: Replace '20 - 30' with '20-30'",
+              "Line 33: No spaces around hyphen in ranges \u2192 Fix: Replace '18 - 65' with '18-65'",
+              "Line 33: No spaces around hyphen in ranges \u2192 Fix: Replace '70 - 85' with '70-85'"
+            ]
+          },
+          {
+            "dimension": "Telephone Numbers",
+            "points_earned": 0,
+            "points_max": 1.0,
+            "passed": false,
+            "issues": [
+              "Line 18: Include country code \u2192 Fix: Add '+1 ' before '(404) 123-4567'",
+              "Line 18: Include country code \u2192 Fix: Add '+1 ' before '(404) 555-1234'"
+            ]
+          },
+          {
+            "dimension": "Temperature",
+            "points_earned": 0,
+            "points_max": 1.0,
+            "passed": false,
+            "issues": [
+              "Line 24: Use degree symbol (\u00b0) instead of 'degrees' \u2192 Fix: Replace '32 degrees Fahrenheit' with format like '98\u00b0F'",
+              "Line 24: Use degree symbol (\u00b0) instead of 'degrees' \u2192 Fix: Replace '6 degrees' with format like '98\u00b0F'",
+              "Line 33: Use degree symbol (\u00b0) instead of 'degrees' \u2192 Fix: Replace '85 degrees Fahrenheit' with format like '98\u00b0F'",
+              "Line 6: Missing degree symbol \u2192 Fix: Replace '98F' with '98\u00b0F'"
+            ]
+          },
+          {
+            "dimension": "Time",
+            "points_earned": 0,
+            "points_max": 2.0,
+            "passed": false,
+            "issues": [
+              "Line 6: Use lowercase am/pm with space \u2192 Fix: Replace '2PM' with '2 pm'",
+              "Line 27: Use lowercase am/pm with space \u2192 Fix: Replace '3PM' with '3 pm'",
+              "Line 27: Use lowercase am/pm with space \u2192 Fix: Replace '9AM' with '9 am'",
+              "Line 27: Use lowercase am/pm with space \u2192 Fix: Replace '5PM' with '5 pm'",
+              "Line 6: Use lowercase am/pm \u2192 Fix: Replace '2PM' with '2 pm'",
+              "Line 27: Use lowercase am/pm \u2192 Fix: Replace '3PM' with '3 pm'",
+              "Line 27: Use lowercase am/pm \u2192 Fix: Replace '9AM' with '9 am'",
+              "Line 27: Use lowercase am/pm \u2192 Fix: Replace '5PM' with '5 pm'",
+              "Line 6: Use 12-hour format with am/pm \u2192 Fix: Convert '14:00' to 12-hour format",
+              "Line 27: Use 12-hour format with am/pm \u2192 Fix: Convert '18:30' to 12-hour format"
+            ]
+          },
+          {
+            "dimension": "Dates",
+            "points_earned": 1.0,
+            "points_max": 2.0,
+            "passed": false,
+            "issues": [
+              "Line 21: Use US date format \u2192 Fix: Convert '2025-11-23' to MM/DD/YYYY or spell out month",
+              "Line 21: Possible non-US date format \u2192 Fix: Ensure MM/DD/YYYY format or spell out month"
+            ]
+          },
+          {
+            "dimension": "Money",
+            "points_earned": 0,
+            "points_max": 2.0,
+            "passed": false,
+            "issues": [
+              "Line 12: Use currency symbol instead of 'dollars' \u2192 Fix: Replace '50 dollars' with '$50'",
+              "Line 12: Use currency symbol instead of 'dollars' \u2192 Fix: Replace '100 dollars' with '$100'",
+              "Line 30: Use currency symbol instead of 'dollars' \u2192 Fix: Replace '2500 dollars' with '$2500'",
+              "Line 30: No space between $ and amount \u2192 Fix: Replace '$ 1000' with '$1000'"
+            ]
+          },
+          {
+            "dimension": "Capitalization",
+            "points_earned": 0,
+            "points_max": 1.0,
+            "passed": false,
+            "issues": [
+              "Line 3: Sentence should start with capital letter \u2192 Fix: Capitalize 'a'",
+              "Line 1: Check capitalization \u2192 Verify if 'Formatting Errors\n\nThis' should be capitalized",
+              "Line 5: Check capitalization \u2192 Verify if 'Time Issues\nThe' should be capitalized",
+              "Line 8: Check capitalization \u2192 Verify if 'Formatting Problems\nWe' should be capitalized",
+              "Line 11: Check capitalization \u2192 Verify if 'Money Errors\nThe' should be capitalized",
+              "Line 26: Check capitalization \u2192 Verify if 'Time Formats\nThe' should be capitalized",
+              "Line 29: Check capitalization \u2192 Verify if 'Money Examples\nThe' should be capitalized"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

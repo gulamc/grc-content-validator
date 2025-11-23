@@ -1,0 +1,33 @@
+Test Article with Formatting Errors
+
+This is a comprehensive test article designed to test all formatting validators, i.e. all 10 dimensions in Category 4.
+
+Temperature and Time Issues
+The temperature today reached 98F, which is quite warm. The meeting is scheduled for 2PM in the conference room. We should arrive by 14:00 to set up.
+
+List Formatting Problems
+We need to order office supplies (ex: pens, paper, notebooks etc) for the new employees.
+
+Percentage and Money Errors
+The sale offers 50 % off, which means you pay only 50 dollars instead of the regular 100 dollars. That's a savings of 50 percent!
+
+Ranges and Numbers
+The project timeline is 20 - 30 days. We need approximately 1/2 of the budget upfront. The measurement is 3.14159265 inches.
+
+Contact Information
+Please call us at (404) 123-4567 for more information. Our international number is (404) 555-1234.
+
+Date Issues
+The event is scheduled for 2025-11-23. The deadline is 31/12/2025.
+
+Temperature Examples
+Water freezes at 32 degrees Fahrenheit. Normal body temperature is 98.6 degrees.
+
+Additional Time Formats
+The flight departs at 3PM and arrives at 18:30. Office hours are 9AM to 5PM.
+
+More Money Examples
+The cost is $ 1000 for the basic package. Premium costs 2500 dollars.
+
+Range Examples
+Ages 18 - 65 are eligible. The temperature range is 70 - 85 degrees Fahrenheit.
