@@ -1,0 +1,89 @@
+Test Article: Grammar & Style Validation
+==========================================
+
+This article contains various grammar and style errors for testing purposes.
+
+APOSTROPHE ERRORS:
+The company's CD's collection from the 1990's is extensive.
+Its' a beautiful day and it's time is running out.
+The dog wagged its' tail happily.
+I love listening to old LP's and cassette's from the 80's.
+
+COLON ERRORS:
+Here are some important items... apples, oranges, and bananas.
+The meeting will cover the following— budget, timeline, and resources.
+The report states: the results were inconclusive.
+Please bring these items: notebook, Pen, and laptop.
+
+COMMA ERRORS (Missing Oxford Comma):
+We invited Sarah, Tom and Jessica to the party.
+The store sells apples, oranges and bananas.
+I like reading, writing and hiking.
+The project requires planning, execution and review.
+
+QUOTATION MARK ERRORS:
+She said "Hello there" and smiled.
+The report titled "Annual Review" was published.
+He mentioned "three key points" , and then left.
+The teacher said "class dismissed".
+
+ELLIPSIS ERRORS:
+The sentence trails off....
+Wait for it..
+The quote continues… with more text.
+She paused...Then continued speaking.
+
+SEMICOLON ERRORS:
+The project was complex; it required careful planning; extensive research; detailed analysis; thorough testing; and constant review; which took months to complete.
+
+AMPERSAND ERRORS:
+The CEO & CFO discussed the quarterly results.
+You & I need to work together on this project.
+Research & development is crucial for innovation.
+We need to review the budget & timeline carefully.
+
+PRONOUN ERRORS:
+One should always check his/her work before submitting.
+When a student completes the form, he/she must sign it.
+Every employee should review his or her benefits package.
+If someone calls, tell him/her I'll call back later.
+A good manager knows s/he must listen to feedback.
+
+NAMES & TITLES ERRORS:
+Yesterday, president Biden met with senator Warren.
+The meeting included governor Newsom from California.
+We spoke with professor Smith, President of the university.
+The director Johnson, Director of Marketing, presented the results.
+
+STATES/CITIES/COUNTRIES ERRORS:
+The conference will be held in NY next month.
+We have offices in CA, TX, and FL.
+The U.S. economy is growing steadily.
+America has strong ties with the UK.
+Our partners in the U.K. are very supportive.
+The USA is a large country.
+
+URLS & WEBSITES ERRORS:
+For more information, visit www.example.com today.
+Check out https://company.com for updates.
+Follow us on twitter and facebook for news.
+Visit our Website for more details.
+You can reach us at http://contact.example.org anytime.
+
+MIXED ERRORS:
+The company's 1990's strategy focused on CD's & DVD's production in America, particularly in NY and CA. president Smith said "the results are promising" , and noted that he/she would continue. For details, visit www.company.com.
+
+One should always verify his/her sources when conducting research in the U.S. The following items are required... laptop, notebook and pen. The CEO's assistant explained that it's time has come; the project needs completion; and s/he will oversee it personally.
+
+CORRECT EXAMPLES (Should Pass):
+The company's strategy from the 1990s focused on innovation.
+President Biden met with Senator Warren to discuss policy.
+We have offices in California, Texas, and Florida.
+The United States has strong ties with the United Kingdom.
+Check out our Twitter and Facebook pages for updates.
+She said, "The results are promising."
+Here are the required items: laptop, notebook, and pen.
+
+The board members—including the CEO, CFO, and COO—reviewed the quarterly results.
+They emphasized three priorities: growth, sustainability, and innovation.
+Use they/them/their when referring to people of unknown gender.
