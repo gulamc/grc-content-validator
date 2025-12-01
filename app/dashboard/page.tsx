@@ -16,7 +16,7 @@ export default function DashboardPage() {
   ];
 
   const dataGuidanceItems = [
-    { id: 'insights' as ValidatorPage, label: 'Insights Validator', icon: BarChart3, path: '/insights' },
+    { id: 'insights' as ValidatorPage, label: 'Insights Validator', icon: BarChart3, path: '/insights-validator' },
   ];
 
   const analyticsItem = { id: 'analytics' as ValidatorPage, path: '/analytics' };

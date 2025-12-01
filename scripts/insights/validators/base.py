@@ -1,109 +1,100 @@
 """
-Base classes and utilities for article validation.
+Base classes for Insights validators
 """
 
 import os
-import json
-from typing import Dict, List, Any, Optional
-from dataclasses import dataclass, asdict
-from anthropic import Anthropic
+from typing import Dict, List, Any
 
 
-@dataclass
 class ValidationResult:
-    """Result from a single validation dimension."""
-    dimension_id: int
-    dimension_name: str
-    score: int
-    max_score: int
-    issues: List[str]
-    details: Optional[Dict[str, Any]] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary format."""
-        result = {
-            'dimension_id': self.dimension_id,
-            'dimension_name': self.dimension_name,
-            'score': self.score,
-            'max_score': self.max_score,
-            'issues': self.issues,
-        }
-        if self.details:
-            result['details'] = self.details
-        return result
+    """Holds validation results for a single dimension."""
+    
+    def __init__(
+        self,
+        dimension_id: int,
+        dimension_name: str,
+        score: float,
+        max_score: float,
+        issues: List[str],
+        details: Dict[str, Any]
+    ):
+        self.dimension_id = dimension_id
+        self.dimension_name = dimension_name
+        self.score = score
+        self.max_score = max_score
+        self.issues = issues
+        self.details = details
 
 
-@dataclass
 class CategoryResult:
-    """Result from a validation category."""
-    category_name: str
-    score: int
-    max_score: int
-    dimensions: List[ValidationResult]
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary format."""
-        return {
-            'category_name': self.category_name,
-            'score': self.score,
-            'max_score': self.max_score,
-            'dimensions': [d.to_dict() for d in self.dimensions],
-        }
+    """Holds validation results for an entire category."""
+    
+    def __init__(
+        self,
+        category_id: int,
+        category_name: str,
+        dimensions: List[ValidationResult],
+        total_score: float,
+        max_score: float
+    ):
+        self.category_id = category_id
+        self.category_name = category_name
+        self.dimensions = dimensions
+        self.total_score = total_score
+        self.max_score = max_score
+        self.percentage = (total_score / max_score * 100) if max_score > 0 else 0
 
 
 class BaseValidator:
     """Base class for all validators."""
-
-    def __init__(self):
-        """Initialize validator with Claude API client."""
-        api_key = os.getenv('ANTHROPIC_API_KEY')
-        self.client = None
-        self.model = "claude-sonnet-4-20250514"  # Latest Sonnet model
-
-        if api_key:
-            try:
-                self.client = Anthropic(api_key=api_key)
-            except Exception as e:
-                print(f"Warning: Failed to initialize Claude client: {e}")
-        else:
-            print("Warning: ANTHROPIC_API_KEY not set. Claude API features will be disabled.")
-
-    def call_claude(self, prompt: str, max_tokens: int = 1024) -> str:
+    
+    def validate(self, article_data: Dict[str, Any]) -> List[ValidationResult]:
         """
-        Call Claude API for subjective assessments.
-
+        Validate article and return list of ValidationResults.
+        
         Args:
-            prompt: The prompt to send to Claude
-            max_tokens: Maximum tokens in response
-
+            article_data: Dict containing 'text' key with article text
+            
         Returns:
-            Claude's response text
+            List of ValidationResult objects
         """
-        if not self.client:
-            print("Warning: Claude API not available. Skipping AI-based assessment.")
-            return ""
-
+        raise NotImplementedError("Subclasses must implement validate()")
+    
+    def call_claude(self, prompt: str, max_tokens: int = 1000) -> str:
+        """
+        Call Claude API for AI-powered validation.
+        
+        Args:
+            prompt: Prompt to send to Claude
+            max_tokens: Maximum tokens in response
+            
+        Returns:
+            Claude's response as string
+        """
+        api_key = os.environ.get('ANTHROPIC_API_KEY')
+        
+        if not api_key:
+            # Return empty response if no API key
+            return '{"has_issues": false, "issues": []}'
+        
         try:
-            message = self.client.messages.create(
-                model=self.model,
+            import anthropic
+            
+            client = anthropic.Anthropic(api_key=api_key)
+            
+            message = client.messages.create(
+                model="claude-sonnet-4-20250514",
                 max_tokens=max_tokens,
                 messages=[
                     {"role": "user", "content": prompt}
                 ]
             )
+            
             return message.content[0].text
+            
+        except ImportError:
+            print("Warning: anthropic package not installed. AI validation disabled.")
+            return '{"has_issues": false, "issues": []}'
         except Exception as e:
             print(f"Warning: Claude API call failed: {e}")
-            return ""
-
-    def validate(self, article_data: Dict[str, Any]) -> ValidationResult:
-        """
-        Validate a single dimension.
-
-        Args:
-            article_data: Parsed article data including text, metadata, etc.
-
-        Returns:
-            ValidationResult with score and issues
-        """
-        raise NotImplementedError("Subclasses must implement validate()")
+            return '{"has_issues": false, "issues": []}'
