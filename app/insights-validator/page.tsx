@@ -22,6 +22,7 @@ interface ValidationResult {
     };
   };
   word_count: number;
+  character_count: number;
   error?: string;
 }
 
