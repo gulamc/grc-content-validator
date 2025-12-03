@@ -18,3 +18,6 @@ textstat==0.7.3
 # Testing
 pytest==7.4.3
 pytest-cov==4.1.0
+
+# Flask web framework for UI
+Flask==3.1.2

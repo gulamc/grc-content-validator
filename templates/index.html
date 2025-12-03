@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Insights Article Validator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Lucide icon replacements using Unicode/CSS */
+        .icon-upload::before { content: "⬆"; font-size: 3rem; }
+        .icon-file::before { content: "📄"; }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <div class="min-h-screen py-8 px-4">
+        <div class="max-w-6xl mx-auto">
+            <!-- Header -->
+            <div class="bg-white rounded-lg shadow-sm p-6 mb-6">
+                <h1 class="text-3xl font-bold text-gray-900 mb-2">
+                    Insights Article Validator
+                </h1>
+                <p class="text-gray-600">
+                    Upload an Insights article (.docx) to validate against the DataGuidance style guide
+                </p>
+            </div>
+
+            <!-- Upload Section -->
+            <div class="bg-white rounded-lg shadow-sm p-6 mb-6">
+                <form action="/validate" method="POST" enctype="multipart/form-data" id="upload-form">
+                    <div class="space-y-4">
+                        <!-- Upload Area -->
+                        <div class="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-gray-400 transition-colors cursor-pointer" id="upload-area">
+                            <input
+                                type="file"
+                                accept=".docx"
+                                name="file"
+                                class="hidden"
+                                id="file-upload"
+                                required
+                            />
+                            <label for="file-upload" class="cursor-pointer block">
+                                <div class="text-gray-400 text-6xl mb-4">⬆</div>
+                                <p class="text-sm text-gray-600 mb-2">
+                                    Click to upload or drag and drop
+                                </p>
+                                <p class="text-xs text-gray-500">
+                                    Word documents (.docx) only
+                                </p>
+                            </label>
+                        </div>
+
+                        <!-- Selected File Display -->
+                        <div id="file-info" class="hidden">
+                            <div class="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                                <div class="flex items-center space-x-3">
+                                    <span class="text-2xl">📄</span>
+                                    <span class="text-sm text-gray-700" id="file-name"></span>
+                                </div>
+                                <button
+                                    type="button"
+                                    onclick="clearFile()"
+                                    class="text-sm text-red-600 hover:text-red-700"
+                                >
+                                    Remove
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Validate Button -->
+                        <button
+                            type="submit"
+                            id="submit-btn"
+                            disabled
+                            class="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+                        >
+                            Validate Article
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('file-upload');
+        const fileInfo = document.getElementById('file-info');
+        const fileName = document.getElementById('file-name');
+        const submitBtn = document.getElementById('submit-btn');
+        const form = document.getElementById('upload-form');
+
+        fileInput.addEventListener('change', function(e) {
+            if (e.target.files && e.target.files[0]) {
+                const file = e.target.files[0];
+                fileName.textContent = file.name;
+                fileInfo.classList.remove('hidden');
+                submitBtn.disabled = false;
+            }
+        });
+
+        function clearFile() {
+            fileInput.value = '';
+            fileInfo.classList.add('hidden');
+            submitBtn.disabled = true;
+        }
+
+        form.addEventListener('submit', function(e) {
+            submitBtn.textContent = 'Validating...';
+            submitBtn.disabled = true;
+        });
+    </script>
+</body>
+</html>
