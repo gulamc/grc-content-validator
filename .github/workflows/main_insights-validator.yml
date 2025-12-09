@@ -7,7 +7,7 @@ name: Build and deploy Python app to Azure Web App - insights-validator
 on:
   push:
     branches:
-      - main
+      - insights-validator-deploy
   workflow_dispatch:
 
 jobs:
