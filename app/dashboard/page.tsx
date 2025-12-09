@@ -3,6 +3,7 @@
 
 import { useState } from 'react';
 import { CheckCircle2, FileText, Upload, BarChart3 } from 'lucide-react';
+import UserProfile from '@/components/UserProfile';
 
 type ValidatorPage = 'analytics' | 'controls' | 'ets' | 'batch' | 'insights';
 
@@ -101,18 +102,38 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Main Content Area - iframe */}
+      {/* Main Content Area - Header + iframe */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        <iframe
-          key={activePage}
-          src={
-            activePage === 'analytics' 
-              ? analyticsItem.path 
-              : [...grcItems, ...dataGuidanceItems].find(item => item.id === activePage)?.path
-          }
-          className="w-full h-full border-0"
-          title={`${activePage} view`}
-        />
+        {/* NEW: Top Header Bar with UserProfile */}
+        <div className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between shadow-sm">
+          {/* Left side - Page title */}
+          <div>
+            <h2 className="text-lg font-semibold text-gray-800">
+              {activePage === 'analytics' && 'Analytics Dashboard'}
+              {activePage === 'controls' && 'Controls Validator'}
+              {activePage === 'ets' && 'Evidence Tasks Validator'}
+              {activePage === 'batch' && 'Batch Validator'}
+              {activePage === 'insights' && 'Insights Validator'}
+            </h2>
+          </div>
+
+          {/* Right side - User Profile */}
+          <UserProfile />
+        </div>
+
+        {/* iframe - Now below the header */}
+        <div className="flex-1 overflow-hidden">
+          <iframe
+            key={activePage}
+            src={
+              activePage === 'analytics' 
+                ? analyticsItem.path 
+                : [...grcItems, ...dataGuidanceItems].find(item => item.id === activePage)?.path
+            }
+            className="w-full h-full border-0"
+            title={`${activePage} view`}
+          />
+        </div>
       </div>
     </div>
   );
