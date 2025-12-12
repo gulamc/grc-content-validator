@@ -507,8 +507,9 @@ function validateLawsRegulations(text: string): DimensionResult {
     );
   }
   
-  // Pattern 2: Acronyms in parentheses with full name
-  const acronymPattern = /\b([A-Z][A-Za-z']*(?:\s+[A-Z][A-Za-z']*)*)\s+\(["'\u201c\u2018]?(?:the\s+)?([A-Z]{2,})["'\u201d\u2019]?\)/g;
+  // Pattern 2: Acronyms in parentheses with full name (with optional year)
+  // Matches: "Online Safety Act (OSA)" AND "Online Safety Act 2023 ("the OSA")"
+  const acronymPattern = /\b([A-Z][A-Za-z']*(?:\s+[A-Z][A-Za-z']*)*)\s+(?:\d{4}\s+)?\(["'\u201c\u2018]?(?:the\s+)?([A-Z]{2,})["'\u201d\u2019]?\)/g;
   const acronymsFound = new Map<string, { firstPosition: number; fullName: string; spelledOut: boolean }>();
   
   for (const match of Array.from(text.matchAll(acronymPattern))) {
@@ -1691,16 +1692,56 @@ function validateLists(text: string): DimensionResult {
 
 function validateDates(text: string): DimensionResult {
   const issues: string[] = [];
+  const details: Record<string, any> = {};
   
-  // Check for numeric date formats (MM/DD/YYYY or DD/MM/YYYY)
+  // UK date format pattern (CRITICAL VIOLATION - AUTO FAIL)
+  // Pattern: "24 April 2025" or "16 March 2025"
+  const ukDatePattern = /\b(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})\b/gi;
+  const ukDates = Array.from(text.matchAll(ukDatePattern));
+  
+  for (const match of ukDates) {
+    const day = match[1];
+    const month = match[2];
+    const year = match[3];
+    const ukFormat = match[0];
+    const usFormat = `${month} ${day}, ${year}`;
+    const location = getParaLineRef(text, match.index || 0);
+    
+    issues.push(
+      `❌ UK date format '${ukFormat}' ${location} - MUST use US format: '${usFormat}'.`
+    );
+  }
+  
+  // Numeric date formats (NOT ALLOWED - must spell out month)
   const numericDatePattern = /\b\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\b/g;
   const numericDates = Array.from(text.matchAll(numericDatePattern));
   
-  if (numericDates.length > 0) {
-    issues.push(`⚠️ Found ${numericDates.length} numeric date(s) - Use written format (e.g., "January 1, 2024" not "01/01/2024")`);
+  for (const match of numericDates) {
+    const location = getParaLineRef(text, match.index || 0);
+    issues.push(
+      `❌ Numeric date format '${match[0]}' ${location} - MUST spell out month (e.g., 'May 25, 2018' not '05/25/2018').`
+    );
   }
   
-  const score = issues.length === 0 ? 1.5 : 1;
+  // US date format pattern (CORRECT)
+  const usDatePattern = /\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}\b/gi;
+  const usDates = Array.from(text.matchAll(usDatePattern));
+  
+  // Calculate score - UK dates are CRITICAL VIOLATION (automatic 0)
+  let score: number;
+  if (ukDates.length > 0) {
+    score = 0;  // AUTO-FAIL for UK dates
+    details.status = 'critical_violation';
+    details.auto_fail = true;
+  } else {
+    score = 1.5;
+    details.status = 'perfect';
+  }
+  
+  details.uk_dates_found = ukDates.length;
+  details.us_dates_found = usDates.length;
+  details.numeric_dates_found = numericDates.length;
+  
   const percentage = Math.round((score / 1.5) * 100);
   
   return {
@@ -1709,9 +1750,9 @@ function validateDates(text: string): DimensionResult {
     score,
     max_score: 1.5,
     percentage,
-    status: score === 1.5 ? "PASS" : "WARN",
+    status: score === 0 ? "FAIL" : score === 1.5 ? "PASS" : "WARN",
     issues,
-    details: { numeric_dates: numericDates.length }
+    details
   };
 }
 
