@@ -2,10 +2,10 @@
 'use client';
 
 import { useState } from 'react';
-import { CheckCircle2, FileText, Upload, BarChart3 } from 'lucide-react';
+import { CheckCircle2, FileText, Upload, BarChart3, FileCode2 } from 'lucide-react';
 import UserProfile from '@/components/UserProfile';
 
-type ValidatorPage = 'analytics' | 'controls' | 'ets' | 'batch' | 'insights';
+type ValidatorPage = 'analytics' | 'controls' | 'ets' | 'batch' | 'insights-node';
 
 export default function DashboardPage() {
   const [activePage, setActivePage] = useState<ValidatorPage>('analytics');
@@ -17,7 +17,7 @@ export default function DashboardPage() {
   ];
 
   const dataGuidanceItems = [
-    { id: 'insights' as ValidatorPage, label: 'Insights Validator', icon: BarChart3, path: '/insights-validator' },
+    { id: 'insights-node' as ValidatorPage, label: 'Insights Validator', icon: FileCode2, path: '/validators-v2/insights-node' },
   ];
 
   const analyticsItem = { id: 'analytics' as ValidatorPage, path: '/analytics' };
@@ -113,7 +113,7 @@ export default function DashboardPage() {
               {activePage === 'controls' && 'Controls Validator'}
               {activePage === 'ets' && 'Evidence Tasks Validator'}
               {activePage === 'batch' && 'Batch Validator'}
-              {activePage === 'insights' && 'Insights Validator'}
+              {activePage === 'insights-node' && 'Insights Validator'}
             </h2>
           </div>
 

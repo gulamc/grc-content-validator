@@ -28,6 +28,7 @@ export default function AnalyticsPage() {
   const validatorStats = [
     { name: 'Controls', runs: 847, passed: 754, passRate: 89, avgScore: 88.2, timeSaved: 127 },
     { name: 'Evidence Tasks', runs: 623, passed: 586, passRate: 94, avgScore: 90.1, timeSaved: 89 },
+    { name: 'Structure', runs: 156, passed: 142, passRate: 91, avgScore: 89.4, timeSaved: 23 },
     { name: 'Batch Processor', runs: 45, passed: 39, passRate: 87, avgScore: 87.5, timeSaved: 18 },
     { name: 'Insights', runs: 12, passed: 12, passRate: 100, avgScore: 92.3, timeSaved: 4 },
   ];
@@ -39,6 +40,23 @@ export default function AnalyticsPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 p-8">
+      {/* ========== NEW: MOCK DATA WARNING BANNER ========== */}
+      <div className="mb-6 bg-red-50 border-2 border-red-500 rounded-lg p-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-red-500 rounded-lg flex items-center justify-center flex-shrink-0">
+            <AlertTriangle className="w-6 h-6 text-white" />
+          </div>
+          <div>
+            <h3 className="text-red-900 font-bold text-lg">⚠️ DEMONSTRATION DATA</h3>
+            <p className="text-red-800 text-sm">
+              This dashboard displays mock data for demonstration purposes only. 
+              Production metrics will be available after deployment.
+            </p>
+          </div>
+        </div>
+      </div>
+      {/* ========== END NEW SECTION ========== */}
+
       {/* Header */}
       <div className="mb-8">
         <h2 className="text-3xl font-bold text-gray-800">Content Validation Analytics</h2>
@@ -178,6 +196,7 @@ export default function AnalyticsPage() {
                       <div className={`w-2 h-2 rounded-full mr-3 ${
                         stat.name === 'Controls' ? 'bg-teal-500' :
                         stat.name === 'Evidence Tasks' ? 'bg-blue-500' :
+                        stat.name === 'Structure' ? 'bg-green-500' :
                         stat.name === 'Batch Processor' ? 'bg-purple-500' :
                         'bg-indigo-500'
                       }`}></div>
@@ -238,6 +257,107 @@ export default function AnalyticsPage() {
           </li>
         </ul>
       </div>
+
+      {/* ========== NEW: INSIGHTS VALIDATOR DETAILED ANALYTICS ========== */}
+      <div className="mt-8 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h3 className="text-xl font-semibold text-gray-800">Insights Validator Analytics</h3>
+            <p className="text-sm text-gray-600 mt-1">Detailed breakdown for DataGuidance articles</p>
+          </div>
+          <span className="px-3 py-1 bg-indigo-100 text-indigo-800 text-sm font-semibold rounded-full">
+            31 Dimensions
+          </span>
+        </div>
+
+        {/* Insights-specific metrics cards */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+          <div className="bg-gradient-to-br from-indigo-50 to-indigo-100 rounded-lg p-4 border border-indigo-200">
+            <p className="text-sm text-indigo-700 font-medium mb-1">Articles Validated</p>
+            <p className="text-3xl font-bold text-indigo-900">127</p>
+            <p className="text-xs text-indigo-600 mt-1">Last 6 months</p>
+          </div>
+          
+          <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-4 border border-green-200">
+            <p className="text-sm text-green-700 font-medium mb-1">Avg Validation Time</p>
+            <p className="text-3xl font-bold text-green-900">30s</p>
+            <p className="text-xs text-green-600 mt-1">Per article</p>
+          </div>
+          
+          <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg p-4 border border-purple-200">
+            <p className="text-sm text-purple-700 font-medium mb-1">Avg Quality Score</p>
+            <p className="text-3xl font-bold text-purple-900">88.5</p>
+            <p className="text-xs text-purple-600 mt-1">Out of 100</p>
+          </div>
+          
+          <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-lg p-4 border border-orange-200">
+            <p className="text-sm text-orange-700 font-medium mb-1">Time Saved</p>
+            <p className="text-3xl font-bold text-orange-900">254hrs</p>
+            <p className="text-xs text-orange-600 mt-1">~2hrs per article</p>
+          </div>
+        </div>
+
+        {/* Quality by Category */}
+        <div className="mb-6">
+          <h4 className="text-md font-semibold text-gray-800 mb-3">Quality by Category</h4>
+          <div className="space-y-3">
+            {[
+              { category: 'Legal & Brand Accuracy', score: 92, color: 'bg-blue-500' },
+              { category: 'Grammar & Style', score: 89, color: 'bg-green-500' },
+              { category: 'Formatting', score: 85, color: 'bg-yellow-500' },
+              { category: 'Content Quality', score: 87, color: 'bg-purple-500' },
+              { category: 'Structure', score: 90, color: 'bg-teal-500' },
+            ].map((item) => (
+              <div key={item.category}>
+                <div className="flex justify-between text-sm mb-1">
+                  <span className="text-gray-700 font-medium">{item.category}</span>
+                  <span className="text-gray-900 font-semibold">{item.score}%</span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div 
+                    className={`${item.color} h-2 rounded-full transition-all duration-500`}
+                    style={{ width: `${item.score}%` }}
+                  ></div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Top 5 Issues for Insights */}
+        <div>
+          <h4 className="text-md font-semibold text-gray-800 mb-3">Top 5 Most Common Issues</h4>
+          <div className="space-y-2">
+            {[
+              { issue: 'British Spellings (Dim 2 - Style)', count: 47, percentage: 28 },
+              { issue: 'Undefined Acronyms (Dim 5)', count: 38, percentage: 23 },
+              { issue: 'Lowercase Law Names (Dim 5)', count: 31, percentage: 19 },
+              { issue: 'Missing Oxford Comma (Dim 11)', count: 26, percentage: 16 },
+              { issue: 'State Abbreviations (Dim 18)', count: 23, percentage: 14 },
+            ].map((item, index) => (
+              <div key={index} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
+                <div className="flex-shrink-0 w-8 h-8 bg-indigo-100 text-indigo-700 rounded-full flex items-center justify-center font-bold text-sm">
+                  {index + 1}
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-gray-900">{item.issue}</p>
+                  <p className="text-xs text-gray-500">{item.count} occurrences</p>
+                </div>
+                <div className="flex-shrink-0">
+                  <span className="px-2 py-1 bg-red-100 text-red-700 text-xs font-semibold rounded">
+                    {item.percentage}%
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="text-sm text-gray-600 mt-4">
+            <strong>Recommendation:</strong> Update style guide for British spellings and provide acronym definition training
+          </p>
+        </div>
+      </div>
+      {/* ========== END NEW SECTION ========== */}
+
     </div>
   );
 }
