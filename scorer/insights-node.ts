@@ -100,21 +100,38 @@ function calculatePercentage(score: number, maxScore: number): number {
 // ========== UK/US SPELLING PATTERNS ==========
 
 const UK_US_SPELLINGS: Record<string, string> = {
-  // -ise/-ize endings (EXPANDED)
-  '\\b(priorit|util|optim|maxim|minim|standard|recogn|real|author|organ|special|general|central|local|personal|final|legal|moral|neutral|normal|rational|visual|global|formal|ideal|internal|external|hospital|material|capital)is(e|ed|ing|ation|ations)\\b':
-    'Use US spelling with -iz- (e.g., prioritizing, utilized)',
+  // -ise/-ize endings (COMPREHENSIVE)
+  '\\b(priorit|util|optim|maxim|minim|standard|recogn|real|author|organ|special|general|central|local|personal|final|legal|moral|neutral|normal|rational|visual|global|formal|ideal|internal|external|hospital|material|capital|categor|summar|emphas|mobilis|publicis|characteris|privatis|modernis|stabilis|synthes|civil|custom|critic|neutral|energ|plural|polar|realis|finalis|civilis|modernis|summaris|recognis|stabil|mobil|social|commercialis|industrialis|nationalis|memoris|criticis|terroris|theoris|philosophis|synchronis)is(e|ed|ing|es|ation|ations)\\b':
+    'Use US spelling with -iz- (e.g., prioritizing, utilized, categorize)',
   
-  // -our/-or endings
-  '\\b(col|fav|behavi|harb|neighb|lab|rum|hum|rig|vig|val|savi|flav|fervhon|arb|tum|cand|clam|dem|endeav|glam|harb|hum|lab|neighb|odor|rum|savi|splend|trem|vig)ours?\\b':
-    'Use US spelling with -or (e.g., color, favor, behavior)',
+  // -yse/-yze endings (analyse, paralyse, etc.) - FIXED: removed 'is' and 'es' to avoid matching nouns
+  '\\b(anal|paral|catal|hydrol|electrol|dial)ys(e|ed|ing)\\b':
+    'Use US spelling with -yz- (e.g., analyze, paralyze, catalyze)',
   
-  // -re/-er endings  
-  '\\b(cent|fib|theat|met|litcalibsept|sabrsom)res?\\b':
-    'Use US spelling with -er (e.g., center, fiber, theater)',
+  // -our/-or endings (COMPREHENSIVE)
+  '\\b(col|behavi|harb|neighb|lab|rum|hum|rig|vig|val|savi|flav|hon|od|parl|splend|trem|vap|arm|fav)ours?\\b':
+    'Use US spelling with -or (e.g., color, favor, behavior, honor, armor)',
+  
+  // -our derivatives (-ourite, -ourable, -ourful, etc.)
+  '\\b(fav|col|hon|hum|lab|vig)our(ite|ites|able|ably|ful|fully|less)\\b':
+    'Use US spelling with -or (e.g., favorite, colorful, honorable)',
+  
+  // -re/-er endings (COMPREHENSIVE)
+  '\\b(cent|fib|theat|met|lit|calib|sept|sabr|som|litr|lustr|sombr|spectr|meagr)res?\\b':
+    'Use US spelling with -er (e.g., center, fiber, theater, liter, meager)',
   
   // -ce/-se endings
   '\\b(defen|offen|licen|preten)ces?\\b':
     'Use US spelling with -se (e.g., defense, offense, license)',
+  
+  // Double-L patterns (travelling, jewellery, etc.)
+  '\\b(travel|cancel|label|model|marvel|wool)l(ed|ing|er|ers)\\b':
+    'Use single L (e.g., traveled, traveling, traveler, canceled, woolen)',
+  '\\bjewellery\\b': 'jewellery → jewelry',
+  '\\bmarvellous\\b': 'marvellous → marvelous',
+  
+  // Sceptic/Skeptic
+  '\\bsceptic(al|ism|s)?\\b': 'sceptic → skeptic',
   
   // Common specific words
   '\\bprogrammes?\\b': 'programme → program',
@@ -123,6 +140,20 @@ const UK_US_SPELLINGS: Record<string, string> = {
   '\\bdialogues?\\b': 'dialogue → dialog',
   '\\bpractise\\b': 'practise (verb) → practice',
   '\\bpenalis(e|ed|ing)\\b': 'penaliz(e|ed|ing)',
+  '\\bapologis(e|ed|ing|es)\\b': 'apologiz(e|ed|ing|es)',
+  '\\bgrey\\b': 'grey → gray',
+  '\\bplough(s|ed|ing)?\\b': 'plough → plow',
+  '\\btyres?\\b': 'tyre → tire',
+  '\\bcheque(s)?\\b': 'cheque → check',
+  '\\bdraught(s)?\\b': 'draught → draft',
+  '\\bstorey(s)?\\b': 'storey (building) → story',
+  '\\bsulphur\\b': 'sulphur → sulfur',
+  '\\bmould(s|ed|ing|y)?\\b': 'mould → mold',
+  '\\baeroplane(s)?\\b': 'aeroplane → airplane',
+  '\\baluminium\\b': 'aluminium → aluminum',
+  '\\bmanoeuvre(s|d|ing)?\\b': 'manoeuvre → maneuver',
+  '\\bcosy\\b': 'cosy → cozy',
+  '\\binstalments?\\b': 'instalment → installment',
 };
 
 // ========== UTILITIES ==========
@@ -132,19 +163,52 @@ const UK_US_SPELLINGS: Record<string, string> = {
  * Matches Python: get_para_line_ref()
  */
 export function getParaLineRef(text: string, position: number): string {
-  const beforePos = text.substring(0, position);
-  const paragraphs = beforePos.split('\n\n');
-  const paraNum = paragraphs.length;
+  // Split text into paragraphs (split on newlines but track positions carefully)
+  const paragraphs: Array<{ text: string; startPos: number; endPos: number; isEmpty: boolean }> = [];
   
-  // Get line within paragraph
-  const currentPara = paragraphs[paragraphs.length - 1] || '';
-  const lines = currentPara.split('\n');
-  const lineNum = lines.length;
+  let currentPos = 0;
+  let currentPara = '';
   
-  if (lineNum > 1) {
-    return `[Para ${paraNum}, Line ${lineNum}]`;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '\n') {
+      // End of current paragraph
+      paragraphs.push({
+        text: currentPara,
+        startPos: currentPos,
+        endPos: i,
+        isEmpty: currentPara.trim().length === 0
+      });
+      currentPara = '';
+      currentPos = i + 1;
+    } else {
+      currentPara += text[i];
+    }
   }
-  return `[Para ${paraNum}]`;
+  
+  // Add last paragraph if any
+  if (currentPara.length > 0 || currentPos < text.length) {
+    paragraphs.push({
+      text: currentPara,
+      startPos: currentPos,
+      endPos: text.length,
+      isEmpty: currentPara.trim().length === 0
+    });
+  }
+  
+  // Count only non-empty paragraphs and find which one contains the position
+  let nonEmptyCount = 0;
+  for (const para of paragraphs) {
+    if (!para.isEmpty) {
+      nonEmptyCount++;
+    }
+    
+    if (position >= para.startPos && position <= para.endPos) {
+      return `[Para ${nonEmptyCount}]`;
+    }
+  }
+  
+  // Fallback
+  return `[Para ${nonEmptyCount}]`;
 }
 
 /**
@@ -442,13 +506,36 @@ function validateLawsRegulations(text: string): DimensionResult {
   
   // Common acronyms that don't need spelling out
   const commonAcronyms = new Set([
-    'API', 'HTML', 'CCTV', 'SMS', 'EU', 'UK', 'US', 'URL',
-    'GDPR', 'CCPA', 'HIPAA', 'DPA', 'AI', 'IoT', 'IP',
-    'IT', 'GRC', 'CEO', 'CFO', 'CTO', 'COO', 'CISO',
-    'HR', 'PR', 'R&D', 'B2B', 'B2C', 'SaaS', 'IaaS',
-    'FAQ', 'ROI', 'KPI', 'NDA', 'RFP', 'SOC', 'ISO',
-    'IEC', 'IEEE', 'NIST', 'ANSI', 'FTC', 'SEC', 'FDA',
-    'GPS', 'COPPA',
+    // Communication & Messaging
+    'API', 'HTML', 'CCTV', 'SMS', 'MMS', 'EOM', 'EOW', 'EOT', 'COB', 'EOD',
+    'OOO', 'RSVP', 'TBD', 'AWOL', 'ETA', 'NWR', 'IM', 'RT',
+    
+    // Geographic & Governmental
+    'EU', 'UK', 'US', 'URL', 'HQ', 'FTC', 'SEC', 'FDA', 'NIST', 'ANSI',
+    
+    // Privacy & Compliance
+    'GDPR', 'CCPA', 'HIPAA', 'DPA', 'COPPA', 'NDA', 'CSR',
+    
+    // Technology & Computing
+    'AI', 'IoT', 'IP', 'IT', 'GRC', 'CSS', 'FTP', 'HTTP', 'HTTPS',
+    'ISP', 'OS', 'LAN', 'DNS', 'XML', 'UI', 'UX', 'ASCII', 'VPN', 'RSS',
+    'CMS', 'SEO', 'CPU',
+    
+    // Business & Finance
+    'CEO', 'CFO', 'CTO', 'COO', 'CISO', 'VP', 'HR', 'HRM', 'PR', 'PA',
+    'QC', 'BD', 'PTO', 'FTE', 'PTE', 'ACCT', 'AP', 'AR', 'BS', 'CR', 'DR',
+    'EPS', 'FIFO', 'ROA', 'ROI', 'KPI', 'RFP', 'SOC',
+    
+    // Marketing & Sales
+    'B2B', 'B2C', 'SaaS', 'IaaS', 'BR', 'CTA', 'CTR', 'LTV', 'CRM', 'ESM',
+    'PPC', 'PV', 'SM', 'SMB', 'SWOT', 'OC', 'WOMM',
+    
+    // Standards & Organizations
+    'ISO', 'IEC', 'IEEE', 'GPS', 'FAQ',
+    
+    // Other Common
+    'R&D', 'P&L', 'N/A', 'Re',
+    
     // State codes
     'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
     'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD',
@@ -1997,15 +2084,38 @@ Respond JSON only:
     /\bhave\s+been\b/gi
   ];
   
+  // Collect ALL examples with location and context
+  const passiveExamples: Array<{ location: string; text: string; context: string }> = [];
   let passiveCount = 0;
+  
   for (const pattern of passivePatterns) {
-    const matches = text.match(pattern);
-    if (matches) passiveCount += matches.length;
+    const regex = new RegExp(pattern.source, pattern.flags);
+    let match;
+    while ((match = regex.exec(text)) !== null) {
+      passiveCount++;
+      
+      // Collect ALL instances (not just first 3)
+      const location = getParaLineRef(text, match.index);
+      const contextStart = Math.max(0, match.index - 40);
+      const contextEnd = Math.min(text.length, match.index + match[0].length + 40);
+      const context = text.substring(contextStart, contextEnd).replace(/\s+/g, ' ');
+      
+      passiveExamples.push({
+        location,
+        text: match[0],
+        context: `...${context}...`
+      });
+    }
   }
   
   if (passiveCount > 5) {
     score = Math.max(0, score - 1);
     issues.push(`⚠️ Passive voice detected (${passiveCount} instances)`);
+    
+    // Show ALL instances with location
+    for (const example of passiveExamples) {
+      issues.push(`  ${example.location}: ${example.context}`);
+    }
   }
   
   details.passive_voice_count = passiveCount;
