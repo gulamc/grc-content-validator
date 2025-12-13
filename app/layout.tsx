@@ -1,4 +1,10 @@
+import type { Metadata } from 'next'
 import './globals.css'
+
+export const metadata: Metadata = {
+  title: 'Content Validator',
+  description: 'GRC Content Validator',
+}
 
 export default function RootLayout({
   children,
