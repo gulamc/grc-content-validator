@@ -1462,7 +1462,7 @@ function validatePronouns(text: string): DimensionResult {
   
   // Find we/our/us with OneTrust context
   const firstPersonPattern = /\b(we|our|us|we're|we've)\b/gi;
-  const onetrustRefs: string[] = [];
+  const onetrustRefs: Array<{ word: string; location: string; context: string }> = [];
   
   for (const match of Array.from(text.matchAll(firstPersonPattern))) {
     // Skip "US" (country)
@@ -1478,7 +1478,15 @@ function validatePronouns(text: string): DimensionResult {
     // Only flag if OneTrust is mentioned in context
     if (context.toLowerCase().includes('onetrust')) {
       const location = getParaLineRef(text, pos);
-      onetrustRefs.push(`${match[0]} ${location}`);
+      // Get shorter context for display (40 chars each side)
+      const displayStart = Math.max(0, pos - 40);
+      const displayEnd = Math.min(text.length, pos + match[0].length + 40);
+      const displayContext = text.substring(displayStart, displayEnd).replace(/\s+/g, ' ');
+      onetrustRefs.push({
+        word: match[0],
+        location,
+        context: `...${displayContext}...`
+      });
     }
   }
   
@@ -1491,7 +1499,8 @@ function validatePronouns(text: string): DimensionResult {
       `Found ${onetrustRefs.length} instance(s) where both appear together.`
     );
     for (let i = 0; i < Math.min(5, onetrustRefs.length); i++) {
-      issues.push(`  • ${onetrustRefs[i]}`);
+      const ref = onetrustRefs[i];
+      issues.push(`  • ${ref.word} ${ref.location}: ${ref.context}`);
     }
   } else {
     score = 2;
@@ -1721,20 +1730,46 @@ function validateNumbers(text: string): DimensionResult {
   const issues: string[] = [];
   
   // Rule 1: Single digits 0-9 should be spelled out (except in special contexts)
-  const singleDigitPattern = /(?<!\d)([0-9])(?!\d|%|°|am|pm|:|,)/g;
+  // Improved pattern to exclude more valid uses
+  const singleDigitPattern = /(?<!\d)([0-9])(?!\d|%|°|am|pm|:|,|\)|\.)/g;
   const seenDigits = new Map<string, number>();
   
   for (const match of Array.from(text.matchAll(singleDigitPattern))) {
     const digit = match[1];
-    const contextStart = Math.max(0, (match.index || 0) - 20);
-    const contextEnd = Math.min(text.length, (match.index || 0) + 20);
+    const position = match.index || 0;
+    const contextStart = Math.max(0, position - 30);
+    const contextEnd = Math.min(text.length, position + 40);
     const context = text.substring(contextStart, contextEnd).toLowerCase();
     
-    // Skip Article/Section references
-    if (['article', 'section', 'page', 'chapter'].some(kw => context.includes(kw))) continue;
+    // Get the actual character before and after for better detection
+    const charBefore = position > 0 ? text[position - 1] : '';
+    const charAfter = position < text.length - 1 ? text[position + 1] : '';
+    
+    // Skip if it's part of a classification label (Category 1, Type 2, Class A, etc.)
+    // Pattern: Capitalized word followed by space and digit
+    // Examples: "Category 1", "Type 2", "Class 3", "Level 4", "Tier 5"
+    const beforeContext = text.substring(Math.max(0, position - 20), position);
+    if (/[A-Z][a-zA-Z]+\s+$/.test(beforeContext)) continue;
+    
+    // Skip if it's part of list numbering
+    // Patterns: "1)", "(1", "1.", "1 )"
+    if (charAfter === ')' || charAfter === '.') continue;
+    if (charBefore === '(' || charBefore === '[') continue;
+    
+    // Skip Article/Section/Page/Chapter references
+    if (['article', 'section', 'page', 'chapter', 'paragraph', 'clause'].some(kw => context.includes(kw))) continue;
+    
+    // Skip numbers before magnitude words (million, billion, thousand, hundred)
+    if (/\d\s+(million|billion|thousand|hundred|dozen)/i.test(text.substring(position, position + 20))) continue;
+    
+    // Skip numbers in mathematical expressions
+    if (/[+\-×÷=<>]/.test(charBefore) || /[+\-×÷=<>]/.test(charAfter)) continue;
+    
+    // Skip ordinal indicators (1st, 2nd, 3rd)
+    if (/\d(st|nd|rd|th)\b/i.test(text.substring(position, position + 5))) continue;
     
     if (!seenDigits.has(digit)) {
-      seenDigits.set(digit, match.index || 0);
+      seenDigits.set(digit, position);
     }
   }
   
@@ -2073,53 +2108,6 @@ Respond JSON only:
     }
   }
   
-  // Regex checks for passive voice
-  const passivePatterns = [
-    /\bwas\s+\w+ed\b/gi,
-    /\bwere\s+\w+ed\b/gi,
-    /\bbeen\s+\w+ed\b/gi,
-    /\bis\s+\w+ed\b/gi,
-    /\bare\s+\w+ed\b/gi,
-    /\bhas\s+been\b/gi,
-    /\bhave\s+been\b/gi
-  ];
-  
-  // Collect ALL examples with location and context
-  const passiveExamples: Array<{ location: string; text: string; context: string }> = [];
-  let passiveCount = 0;
-  
-  for (const pattern of passivePatterns) {
-    const regex = new RegExp(pattern.source, pattern.flags);
-    let match;
-    while ((match = regex.exec(text)) !== null) {
-      passiveCount++;
-      
-      // Collect ALL instances (not just first 3)
-      const location = getParaLineRef(text, match.index);
-      const contextStart = Math.max(0, match.index - 40);
-      const contextEnd = Math.min(text.length, match.index + match[0].length + 40);
-      const context = text.substring(contextStart, contextEnd).replace(/\s+/g, ' ');
-      
-      passiveExamples.push({
-        location,
-        text: match[0],
-        context: `...${context}...`
-      });
-    }
-  }
-  
-  if (passiveCount > 5) {
-    score = Math.max(0, score - 1);
-    issues.push(`⚠️ Passive voice detected (${passiveCount} instances)`);
-    
-    // Show ALL instances with location
-    for (const example of passiveExamples) {
-      issues.push(`  ${example.location}: ${example.context}`);
-    }
-  }
-  
-  details.passive_voice_count = passiveCount;
-  
   // Check for long sentences (>40 words)
   const sentences = text.split(/[.!?]+\s+|\n\n+/).map(s => s.trim()).filter(s => s.length > 0);
   const longSentences: any[] = [];
@@ -2295,28 +2283,20 @@ function validateVoice(text: string): DimensionResult {
   let score = 10; // Start with full score
   
   // Check for first-person singular (always wrong)
-  const firstPersonSingular = (text.match(/\b(I|my)\b/gi) || []).length;
-  if (firstPersonSingular > 0) {
+  const firstPersonMatches = Array.from(text.matchAll(/\b(I|my)\b/gi));
+  
+  if (firstPersonMatches.length > 0) {
     score -= 3;
-    issues.push(`⚠️ First-person singular: ${firstPersonSingular} instances [Dim 3]`);
-  }
-  
-  // Check for we/our/us in OneTrust context
-  const ourMatches = text.matchAll(/\b(we|our|us)\b/gi);
-  let onetrustRefs = 0;
-  
-  for (const match of ourMatches) {
-    if (match[0].toUpperCase() === "US") continue;
-    const pos = match.index || 0;
-    const context = text.substring(Math.max(0, pos - 80), Math.min(text.length, pos + 80));
-    if (context.toLowerCase().includes('onetrust')) {
-      onetrustRefs++;
+    issues.push(`⚠️ First-person singular: ${firstPersonMatches.length} instances`);
+    
+    // Show all instances with paragraph numbers AND context
+    for (const match of firstPersonMatches) {
+      const location = getParaLineRef(text, match.index || 0);
+      const contextStart = Math.max(0, match.index - 40);
+      const contextEnd = Math.min(text.length, match.index + match[0].length + 40);
+      const context = text.substring(contextStart, contextEnd).replace(/\s+/g, ' ');
+      issues.push(`  ${location}: ...${context}...`);
     }
-  }
-  
-  if (onetrustRefs > 0) {
-    score -= 2;
-    issues.push(`ℹ️ OneTrust references: ${onetrustRefs} instances - use 'OneTrust' not we/our [Dim 3]`);
   }
   
   // Second-person pronouns
@@ -2328,16 +2308,61 @@ function validateVoice(text: string): DimensionResult {
     issues.push(`ℹ️ High second-person usage (${secondPerson} instances) - Consider formal alternatives. [Style Guide: Dimension 3]`);
   }
   
-  details.first_person_singular = firstPersonSingular;
-  details.onetrust_refs = onetrustRefs;
+  // Passive voice check (moved from Dim 1)
+  const passivePatterns = [
+    /\bwas\s+\w+ed\b/gi,
+    /\bwere\s+\w+ed\b/gi,
+    /\bbeen\s+\w+ed\b/gi,
+    /\bis\s+\w+ed\b/gi,
+    /\bare\s+\w+ed\b/gi,
+    /\bhas\s+been\b/gi,
+    /\bhave\s+been\b/gi
+  ];
+  
+  // Collect ALL examples with location and context
+  const passiveExamples: Array<{ location: string; text: string; context: string }> = [];
+  let passiveCount = 0;
+  
+  for (const pattern of passivePatterns) {
+    const regex = new RegExp(pattern.source, pattern.flags);
+    let match;
+    while ((match = regex.exec(text)) !== null) {
+      passiveCount++;
+      
+      // Collect ALL instances
+      const location = getParaLineRef(text, match.index);
+      const contextStart = Math.max(0, match.index - 40);
+      const contextEnd = Math.min(text.length, match.index + match[0].length + 40);
+      const context = text.substring(contextStart, contextEnd).replace(/\s+/g, ' ');
+      
+      passiveExamples.push({
+        location,
+        text: match[0],
+        context: `...${context}...`
+      });
+    }
+  }
+  
+  if (passiveCount > 5) {
+    score = Math.max(0, score - 1);
+    issues.push(`⚠️ Passive voice detected (${passiveCount} instances)`);
+    
+    // Show ALL instances with location
+    for (const example of passiveExamples) {
+      issues.push(`  ${example.location}: ${example.context}`);
+    }
+  }
+  
+  details.first_person_singular = firstPersonMatches.length;
   details.second_person_count = secondPerson;
+  details.passive_voice_count = passiveCount;
   
   score = Math.max(0, score);
   const percentage = Math.round((score / 10) * 100);
   
   return {
     dimension_id: 3,
-    dimension_name: "Voice",
+    dimension_name: "Voice & Narrative Style",
     score,
     max_score: 10,
     percentage,
