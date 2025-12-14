@@ -395,8 +395,11 @@ function validateAuthorities(text: string): DimensionResult {
   const issues: string[] = [];
   const details: Record<string, any> = {};
   
-  // Pattern: Authority with abbreviation
-  const authorityPattern = /(?:The|the|A|An)\s+([A-Z][A-Za-z']*(?:\s+[A-Z][A-Za-z']*){1,6})\s*\(([^)]+)\)/g;
+  // Pattern: ANY capitalized name/title with abbreviation
+  // Catches both:
+  //   - "The Information Commissioner's Office (the ICO)" (authorities)
+  //   - "Online Safety Act 2023 (the OSA)" (laws/regulations)
+  const authorityPattern = /\b(?:The|the|A|An)?\s*([A-Z][A-Za-z']*(?:\s+[A-Z][A-Za-z']*){1,10})(?:\s+\d{4})?\s*\(["']?([^)"']+)["']?\)/g;
   
   interface Authority {
     name: string;
@@ -409,8 +412,11 @@ function validateAuthorities(text: string): DimensionResult {
   
   for (const match of Array.from(text.matchAll(authorityPattern))) {
     const fullName = match[1].trim();
-    const abbreviation = match[2].trim();
+    let abbreviation = match[2].trim();
     const position = match.index || 0;
+    
+    // Remove quotation marks from abbreviation if present
+    abbreviation = abbreviation.replace(/^["']|["']$/g, '');
     
     authoritiesFound.push({ name: fullName, abbr: abbreviation, position });
     
