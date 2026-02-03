@@ -5,7 +5,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 
 // ========== TYPES ==========
-export type CheckStatus = "PASS" | "WARN" | "FAIL" | "N/A";
+export type CheckStatus = "PASS" | "WARN" | "FAIL" | "INFO" | "N/A";
 
 export interface ValidationIssue {
   location: string;
@@ -34,11 +34,30 @@ export interface CategoryResult {
 
 export interface InsightsScoreResponse {
   success: boolean;
-  total_score: number | null;  // null when failing (< 85%)
+  total_score: number; // TRANSPARENCY FIX: Always show actual score
   total_max: number;
-  total_percentage: number | null;  // null when failing (< 85%)
+  total_percentage: number; // TRANSPARENCY FIX: Always show actual percentage
   status: 'pass' | 'fail';
   pass_threshold: number;
+  
+  // TRANSPARENCY ADDITIONS
+  score_gap?: {
+    points_needed: number;
+    percentage_gap: number;
+    message: string;
+  };
+  
+  improvement_guidance?: {
+    quick_wins: Array<{
+      dimension: string;
+      potential_gain: number;
+      issue_count: number;
+      priority: 'HIGH' | 'MEDIUM' | 'LOW';
+    }>;
+    total_dimensions_with_issues: number;
+    total_potential_gain: number;
+  };
+  
   categories: {
     content_quality: CategoryResult;     // Dims 1-3 (30 pts)
     legal_brand: CategoryResult;         // Dims 4-8 (25 pts)
@@ -542,6 +561,15 @@ function validateLawsRegulations(text: string): DimensionResult {
     // Other Common
     'R&D', 'P&L', 'N/A', 'Re',
     
+    // Business entities (Bug 1a fix)
+    'LLP', 'LLC', 'PLC', 'Ltd', 'Inc', 'Corp',
+    
+    // Energy/Power units (Bug 1a fix)
+    'MW', 'kW', 'GW',
+    
+    // UK Government (Bug 1a fix)
+    'GCHQ',
+    
     // State codes
     'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
     'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD',
@@ -602,14 +630,69 @@ function validateLawsRegulations(text: string): DimensionResult {
   
   // Pattern 2: Acronyms in parentheses with full name (with optional year)
   // Matches: "Online Safety Act (OSA)" AND "Online Safety Act 2023 ("the OSA")"
-  const acronymPattern = /\b([A-Z][A-Za-z']*(?:\s+[A-Z][A-Za-z']*)*)\s+(?:\d{4}\s+)?\(["'\u201c\u2018]?(?:the\s+)?([A-Z]{2,})["'\u201d\u2019]?\)/g;
+  // Bug 1b fix: Changed [A-Z] to [A-Za-z] to allow lowercase definitions like "data protection officer (DPO)"
+  const acronymPattern = /\b([A-Za-z][A-Za-z']*(?:\s+[A-Za-z][A-Za-z']*)*)\s+(?:\d{4}\s+)?\(["'\u201c\u2018]?(?:the\s+)?([A-Z]{2,})["'\u201d\u2019]?\)/g;
+  
+  // Bug 1c fix: Pattern for acronyms WITH full name inside parentheses, separated by dash
+  // Matches: "(relevant digital service providers – RDSP)" or "(operators of essential services - OES)"
+  // Supports: hyphen (-), en-dash (–), em-dash (—)
+  const acronymWithDashPattern = /\(([A-Za-z][A-Za-z']*(?:\s+[A-Za-z][A-Za-z']*)*)\s*[-–—]\s*([A-Z]{2,})\)/g;
+  
   const acronymsFound = new Map<string, { firstPosition: number; fullName: string; spelledOut: boolean }>();
+  
+  // Bug 1b fix: Stopwords to filter false positives from lowercase pattern
+  const stopwords = new Set([
+    // Articles & determiners
+    'the', 'a', 'an', 'this', 'that', 'these', 'those',
+    // Prepositions
+    'of', 'for', 'with', 'from', 'to', 'in', 'on', 'at', 'by', 'as',
+    // Conjunctions
+    'and', 'or', 'but', 'if', 'when', 'where', 'how',
+    // Verbs (common linking/auxiliary)
+    'is', 'was', 'are', 'were', 'be', 'been', 'being',
+    // Pronouns
+    'it', 'what', 'which', 'who', 'whom',
+    // Generic meta-words unlikely in professional acronyms
+    'word', 'words', 'text', 'thing', 'things', 'item', 'items'
+  ]);
   
   for (const match of Array.from(text.matchAll(acronymPattern))) {
     const fullName = match[1].trim();
     const acronym = match[2].trim();
     
     if (commonAcronyms.has(acronym)) continue;
+    
+    // Bug 1b fix: Filter out false positives (all words are stopwords)
+    const words = fullName.toLowerCase().split(/\s+/);
+    const allStopwords = words.every(word => stopwords.has(word));
+    if (allStopwords) {
+      // Skip: e.g., "word of the (OF)" - not a real acronym definition
+      continue;
+    }
+    
+    if (!acronymsFound.has(acronym)) {
+      acronymsFound.set(acronym, {
+        firstPosition: match.index || 0,
+        fullName,
+        spelledOut: true
+      });
+    }
+  }
+  
+  // Bug 1c fix: Process acronyms with dash inside parentheses
+  // Example: "(relevant digital service providers – RDSP)"
+  for (const match of Array.from(text.matchAll(acronymWithDashPattern))) {
+    const fullName = match[1].trim();
+    const acronym = match[2].trim();
+    
+    if (commonAcronyms.has(acronym)) continue;
+    
+    // Apply stopword filter (same as Bug 1b)
+    const words = fullName.toLowerCase().split(/\s+/);
+    const allStopwords = words.every(word => stopwords.has(word));
+    if (allStopwords) {
+      continue;
+    }
     
     if (!acronymsFound.has(acronym)) {
       acronymsFound.set(acronym, {
@@ -1090,7 +1173,16 @@ function validateColons(text: string): DimensionResult {
     issues.push(`⚠️ Found ${spaceBeforeColonMatches.length} space(s) before colon - Remove space`);
   }
   
-  // Rule 2: Avoid colons in headings/titles
+  // Rule 2: Avoid colons in headings/titles [MASKED - Bug 3 fix]
+  // This rule has been disabled because it's NOT in the OneTrust style guide.
+  // The style guide (page 24-25) explicitly allows colons:
+  // - "Use a colon (rather than an ellipsis, em dash, or comma) to offset a list"
+  // - "Use a colon to join 2 related phrases"
+  // There is NO prohibition against colons in headings/titles.
+  // Editor feedback confirmed: "we've historically had colons in titles"
+  //
+  // ORIGINAL CODE (now masked):
+  /*
   const lines = text.split('\n');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
@@ -1114,6 +1206,7 @@ function validateColons(text: string): DimensionResult {
       }
     }
   }
+  */
   
   // Score
   let score: number;
@@ -1129,7 +1222,8 @@ function validateColons(text: string): DimensionResult {
   }
   
   details.space_before_colon_count = spaceBeforeColonMatches.length;
-  details.heading_colon_issues = issues.length - (spaceBeforeColonMatches.length > 0 ? 1 : 0);
+  details.heading_colon_rule_masked = true; // Bug 3 fix - rule not in style guide
+  details.heading_colon_issues = 0; // Always 0 since rule is masked
   
   const percentage = Math.round((score / 2) * 100);
   
@@ -2055,7 +2149,10 @@ function validateTime(text: string): DimensionResult {
 async function validateWritingGoals(text: string): Promise<DimensionResult> {
   const issues: string[] = [];
   const details: Record<string, any> = {};
-  let score = 10; // Start with full score
+  
+  // HYBRID APPROACH: Advisory unless writing is truly terrible
+  // Score 10/10 for normal articles, only deduct for AI score < 5
+  let score = 10; // Default: assume acceptable writing
   
   // AI Assessment (6 criteria)
   const textSample = text.substring(0, 4000);
@@ -2093,28 +2190,43 @@ Respond JSON only:
           const critScore = assessment[criterion].score || 10;
           scores.push(critScore);
           
-          if (critScore < 7 && assessment[criterion].issue) {
-            issues.push(`ℹ️ ${criterion.charAt(0).toUpperCase() + criterion.slice(1)}: ${assessment[criterion].issue}`);
+          // Show suggestions for any non-perfect score
+          if (critScore < 8 && assessment[criterion].issue) {
+            const icon = critScore < 5 ? '⚠️' : '💡';
+            issues.push(`${icon} ${criterion.charAt(0).toUpperCase() + criterion.slice(1)}: ${assessment[criterion].issue}`);
           }
         }
       }
       
+      // HYBRID SCORING: Only deduct if writing is genuinely terrible
       if (scores.length > 0) {
         const avgScore = scores.reduce((a, b) => a + b, 0) / scores.length;
-        if (avgScore < 6) score = 5;
-        else if (avgScore < 7) score = 7;
-        else if (avgScore < 8) score = 8;
-        else if (avgScore < 9) score = 9;
-        else score = 10;
+        
+        if (avgScore < 5) {
+          // SAFETY NET: Truly terrible writing (5% of articles)
+          score = 7;
+          issues.push(`⚠️ Writing quality needs significant improvement (AI assessment: ${avgScore.toFixed(1)}/10, -3 points)`);
+        } else {
+          // ADVISORY: Everything else (95% of articles)
+          score = 10;
+          
+          // Add informational note if suggestions were shown
+          if (avgScore < 8 && issues.length > 0) {
+            details.advisory_note = "Suggestions are advisory only - no points deducted";
+          }
+        }
+        
+        details.average_ai_score = avgScore.toFixed(1);
       }
       
       details.ai_scores = assessment;
     } catch (e) {
-      // AI parsing failed, continue with regex checks
+      // AI parsing failed, give benefit of doubt
+      score = 10;
     }
   }
   
-  // Check for long sentences (>40 words)
+  // Check for long sentences (>40 words) - advisory only
   const sentences = text.split(/[.!?]+\s+|\n\n+/).map(s => s.trim()).filter(s => s.length > 0);
   const longSentences: any[] = [];
   
@@ -2136,16 +2248,17 @@ Respond JSON only:
   }
   
   if (longSentences.length > 3) {
-    score = Math.max(0, score - 1);
-    issues.push(`⚠️ ${longSentences.length} sentences exceed 40 words`);
-    for (const sent of longSentences) {
+    issues.push(`💡 Suggestion: ${longSentences.length} sentences exceed 40 words - consider breaking them up`);
+    for (const sent of longSentences.slice(0, 3)) {
       issues.push(`  ${sent.location} (${sent.word_count} words): ${sent.preview}`);
+    }
+    if (longSentences.length > 3) {
+      issues.push(`  ... and ${longSentences.length - 3} more`);
     }
   }
   
   details.long_sentences_count = longSentences.length;
   
-  score = Math.max(0, score);
   const percentage = Math.round((score / 10) * 100);
   
   return {
@@ -2154,7 +2267,7 @@ Respond JSON only:
     score,
     max_score: 10,
     percentage,
-    status: score >= 7 ? "PASS" : score >= 5 ? "WARN" : "FAIL",
+    status: score >= 7 ? "PASS" : "FAIL",
     issues,
     details
   };
@@ -2198,20 +2311,31 @@ Respond JSON only:
           const critScore = assessment[criterion].score || 10;
           scores.push(critScore);
           
-          if (critScore < 7 && assessment[criterion].issue) {
+          // Show issues for any non-perfect score (changed from < 7 to < 10)
+          if (critScore < 10 && assessment[criterion].issue) {
             const label = criterion.replace('_', ' ');
-            issues.push(`ℹ️ ${label.charAt(0).toUpperCase() + label.slice(1)}: ${assessment[criterion].issue}`);
+            const icon = critScore < 7 ? '⚠️' : 'ℹ️';
+            issues.push(`${icon} ${label.charAt(0).toUpperCase() + label.slice(1)}: ${assessment[criterion].issue}`);
           }
         }
       }
       
       if (scores.length > 0) {
         const avgScore = scores.reduce((a, b) => a + b, 0) / scores.length;
-        if (avgScore < 6) score = 5;
-        else if (avgScore < 7) score = 7;
-        else if (avgScore < 8) score = 8;
-        else if (avgScore < 9) score = 9;
-        else score = 10;
+        
+        // Add summary message if score reduced
+        let targetScore = 10;
+        if (avgScore < 6) targetScore = 5;
+        else if (avgScore < 7) targetScore = 7;
+        else if (avgScore < 8) targetScore = 8;
+        else if (avgScore < 9) targetScore = 9;
+        
+        if (targetScore < 10) {
+          const deduction = 10 - targetScore;
+          issues.push(`AI assessment: Tone could be improved (avg ${avgScore.toFixed(1)}/10, -${deduction} points)`);
+        }
+        
+        score = targetScore;
       }
       
       details.ai_scores = assessment;
@@ -2233,7 +2357,62 @@ Respond JSON only:
     const regex = new RegExp(pattern, 'gi');
     for (const match of Array.from(text.matchAll(regex))) {
       const matchedText = match[0];
-      const location = getParaLineRef(text, match.index || 0);
+      const matchPosition = match.index || 0;
+      const location = getParaLineRef(text, matchPosition);
+      
+      // Bug 2 fix (SIMPLIFIED): Whitelist approach for proper names
+      // If UK word is preceded by proper name indicators → Skip (it's a proper name)
+      // Otherwise → Flag normally
+      
+      // WHITELIST: Words that indicate a proper name when they appear before UK spelling
+      const properNameIndicators = new Set([
+        // Government/Official agencies
+        'national', 'international', 'federal', 'state', 'royal', 'government',
+        'parliamentary', 'congressional', 'ministerial',
+        // Geographic/Political entities
+        'european', 'british', 'american', 'canadian', 'australian', 'united', 'kingdom',
+        // Institutional identifiers
+        'ministry', 'department', 'agency', 'commission', 'authority',
+        'bureau', 'council', 'board', 'committee', 'tribunal',
+        // Official offices
+        'office', "commissioner's", 'ombudsman', 'registrar',
+        // Academic/Professional institutions
+        'university', 'college', 'institute', 'academy', 'school',
+        // Geographic proper names (common ones)
+        'london', 'manchester', 'birmingham', 'edinburgh', 'oxford', 'cambridge',
+        // Other indicators
+        'his', 'her', "majesty's", 'crown', 'supreme', 'high'
+      ]);
+      
+      // Only check if the UK word is capitalized
+      const matchFirstChar = matchedText.replace(/^[^A-Za-z]+/, '')[0];
+      const matchIsCapitalized = matchFirstChar === matchFirstChar.toUpperCase() && 
+                                 matchFirstChar !== matchFirstChar.toLowerCase();
+      
+      if (matchIsCapitalized) {
+        // Get words before the match (look back up to 5 words)
+        const windowSize = 100; // chars to look back
+        const windowStart = Math.max(0, matchPosition - windowSize);
+        const beforeText = text.substring(windowStart, matchPosition);
+        const wordsBefore = beforeText.split(/\s+/).filter(w => w.length > 0);
+        
+        // Check last 5 words before the match
+        const recentWords = wordsBefore.slice(-5);
+        
+        // If ANY word is a proper name indicator → Skip (it's a proper name)
+        const hasProperNameIndicator = recentWords.some(word => {
+          const cleanWord = word.replace(/^[^A-Za-z]+|[^A-Za-z]+$/g, '').toLowerCase();
+          return properNameIndicators.has(cleanWord);
+        });
+        
+        if (hasProperNameIndicator) {
+          // Skip: e.g., "National Cyber Security Centre"
+          continue;
+        }
+      }
+      
+      // If we reach here, flag it normally
+      // This will catch: "Data Centre OES", "centre", "organisations", etc.
       
       // Generate US suggestion based on pattern
       let usSuggestion: string;
@@ -2258,8 +2437,20 @@ Respond JSON only:
   }
   
   if (ukViolations.length > 0) {
-    score = Math.max(0, score - 3);
-    issues.push(`❌ UK spelling detected (${ukViolations.length} instances) - Use US English`);
+    // Scaled penalty based on severity
+    let penalty = 0;
+    if (ukViolations.length <= 2) {
+      penalty = 2;  // 1-2 instances: Minor
+    } else if (ukViolations.length <= 5) {
+      penalty = 4;  // 3-5 instances: Moderate
+    } else if (ukViolations.length <= 10) {
+      penalty = 6;  // 6-10 instances: Serious
+    } else {
+      penalty = 8;  // 11+ instances: Severe
+    }
+    
+    score = Math.max(0, score - penalty);
+    issues.push(`❌ UK spelling detected (${ukViolations.length} instances, -${penalty} points) - Use US English`);
     // Show ALL violations with details
     for (const v of ukViolations) {
       issues.push(`  ${v.location}: '${v.uk_spelling}' → '${v.us_spelling}'`);
@@ -2315,14 +2506,14 @@ function validateVoice(text: string): DimensionResult {
   }
   
   // Passive voice check (moved from Dim 1)
+  // FIXED: Merged overlapping patterns to prevent double-counting
+  // "has been added" was counted twice: as "has been" AND "been added"
   const passivePatterns = [
-    /\bwas\s+\w+ed\b/gi,
-    /\bwere\s+\w+ed\b/gi,
-    /\bbeen\s+\w+ed\b/gi,
-    /\bis\s+\w+ed\b/gi,
-    /\bare\s+\w+ed\b/gi,
-    /\bhas\s+been\b/gi,
-    /\bhave\s+been\b/gi
+    /\bwas\s+\w+ed\b/gi,                    // "was introduced"
+    /\bwere\s+\w+ed\b/gi,                   // "were designed"
+    /\b(has|have)\s+been\s+\w+ed\b/gi,     // "has been added", "have been expanded" (COMBINED)
+    /\bis\s+\w+ed\b/gi,                     // "is provided", "is expected"
+    /\bare\s+\w+ed\b/gi,                    // "are excluded", "are considered"
   ];
   
   // Collect ALL examples with location and context
@@ -2350,8 +2541,20 @@ function validateVoice(text: string): DimensionResult {
   }
   
   if (passiveCount > 5) {
-    score = Math.max(0, score - 1);
-    issues.push(`⚠️ Passive voice detected (${passiveCount} instances)`);
+    // Scaled penalty based on severity
+    let passivePenalty = 0;
+    if (passiveCount <= 10) {
+      passivePenalty = 2;  // 6-10 instances: -2 points
+    } else if (passiveCount <= 15) {
+      passivePenalty = 3;  // 11-15 instances: -3 points
+    } else if (passiveCount <= 20) {
+      passivePenalty = 4;  // 16-20 instances: -4 points
+    } else {
+      passivePenalty = 5;  // 21+ instances: -5 points
+    }
+    
+    score = Math.max(0, score - passivePenalty);
+    issues.push(`⚠️ Passive voice detected (${passiveCount} instances, -${passivePenalty} points) - Use active voice`);
     
     // Show ALL instances with location
     for (const example of passiveExamples) {
@@ -2421,13 +2624,13 @@ async function validateStandardStructure(text: string): Promise<DimensionResult>
     score -= 2;
   }
   
-  // Check for conclusion
+  // Check for conclusion (OPTIONAL - warning only, no points deducted)
   const conclusionKeywords = ['conclusion', 'summary', 'key takeaways', 'looking ahead'];
   const hasConclusion = headings.some(h => conclusionKeywords.some(kw => h.toLowerCase().includes(kw)));
   
   if (!hasConclusion) {
-    issues.push("Missing: Conclusion section");
-    score -= 2;
+    issues.push("💡 Suggestion: Consider adding a Conclusion or Summary section");
+    // NO SCORE DEDUCTION - conclusion is optional
   }
   
   // Check for clear sections
@@ -2498,6 +2701,7 @@ If you find a GENUINE critical issue (rare):
   details.headings_found = headings.length;
   details.has_intro = hasIntro;
   details.has_conclusion = hasConclusion;
+  details.conclusion_note = "Conclusion is optional - no points deducted if missing";
   details.flow_suggestions = flowSuggestions;
   
   // Add flow suggestions to issues (don't affect score)
@@ -2524,7 +2728,7 @@ async function validateQualityChecklist(text: string): Promise<DimensionResult> 
   if (!text.trim()) {
     return {
       dimension_id: 31,
-      dimension_name: "Quality Checklist Compliance",
+      dimension_name: "Introduction Value & Clarity", // Bug 4 fix: Renamed for clarity
       score: 0,
       max_score: 2,
       percentage: 0,
@@ -2533,6 +2737,16 @@ async function validateQualityChecklist(text: string): Promise<DimensionResult> 
       details
     };
   }
+  
+  // Bug 4 fix: This dimension assesses the INTRODUCTION (first 3000 chars)
+  // It checks if the article clearly explains:
+  // - WHY: Why this topic matters (legal importance, timeliness)
+  // - WHO: Who the target audience is
+  // - WHAT: What readers will learn from this article
+  
+  // ISSUE 3 FIX: This dimension is ADVISORY ONLY (subjective AI assessment)
+  // Score is always max (2/2) - no points deducted
+  // Issues are informational guidance only
   
   // Use AI to assess if the article provides clear VALUE to readers
   const textSample = text.substring(0, 3000);
@@ -2554,6 +2768,7 @@ Assess these 3 specific aspects:
 3. **WHAT they'll learn**: Does the article preview the key takeaways or information readers will gain?
    - Look for overview statements, summaries, or clear structure that shows what's covered
    - Examples: "this article explains", "key requirements include", section headings
+   - NOTE: This content may appear under headings like "Introduction", "Overview", "Summary", "Background", etc.
 
 Respond in JSON:
 {
@@ -2581,9 +2796,9 @@ Be specific - include evidence quotes when present is true.`;
           questionsAddressed++;
           assessmentDetails.why_matters = "✓ Present";
         } else {
-          issues.push(`⚠️ Article opening should explain WHY this topic is legally important or timely`);
-          issues.push(`   Suggestion: Add context about new laws, changes, or risks that make this topic relevant now`);
-          assessmentDetails.why_matters = "✗ Missing";
+          issues.push(`💡 Suggestion: Introduction should explain WHY this topic is legally important or timely`);
+          issues.push(`   Example: Add context about new laws, changes, or risks that make this topic relevant`);
+          assessmentDetails.why_matters = "✗ Missing (advisory only)";
         }
         
         // WHO this is for
@@ -2591,9 +2806,9 @@ Be specific - include evidence quotes when present is true.`;
           questionsAddressed++;
           assessmentDetails.who_for = "✓ Present";
         } else {
-          issues.push(`⚠️ Target audience is unclear - who needs to read this?`);
-          issues.push(`   Suggestion: Specify who this affects (e.g., "Organizations subject to...", "Companies that...")`);
-          assessmentDetails.who_for = "✗ Missing";
+          issues.push(`💡 Suggestion: Introduction should clarify the target audience - who needs to read this?`);
+          issues.push(`   Example: Specify who this affects (e.g., "Organizations subject to...", "Companies that...")`);
+          assessmentDetails.who_for = "✗ Missing (advisory only)";
         }
         
         // WHAT they'll learn
@@ -2601,39 +2816,41 @@ Be specific - include evidence quotes when present is true.`;
           questionsAddressed++;
           assessmentDetails.what_learn = "✓ Present";
         } else {
-          issues.push(`⚠️ Article doesn't preview what readers will learn`);
-          issues.push(`   Suggestion: Add overview of key points or requirements covered in the article`);
-          assessmentDetails.what_learn = "✗ Missing";
+          issues.push(`💡 Suggestion: Introduction should preview what readers will learn`);
+          issues.push(`   Example: Add overview of key points or requirements covered in the article`);
+          assessmentDetails.what_learn = "✗ Missing (advisory only)";
         }
       }
     } catch (e) {
-      // Fallback: fail all
-      issues.push(`⚠️ Article should clearly explain: (1) WHY this matters, (2) WHO it's for, (3) WHAT they'll learn`);
+      // Fallback: advisory suggestions
+      issues.push(`💡 Suggestion: Introduction should clearly explain: (1) WHY this matters, (2) WHO it's for, (3) WHAT they'll learn`);
       issues.push(`   These elements help readers quickly assess if the article is relevant to them`);
       assessmentDetails.error = "Could not assess - AI parsing failed";
     }
   } else {
-    // No AI response: fail all
-    issues.push(`⚠️ Article should clearly explain: (1) WHY this matters, (2) WHO it's for, (3) WHAT they'll learn`);
+    // No AI response: advisory suggestions
+    issues.push(`💡 Suggestion: Introduction should clearly explain: (1) WHY this matters, (2) WHO it's for, (3) WHAT they'll learn`);
     issues.push(`   These elements help readers quickly assess if the article is relevant to them`);
     assessmentDetails.error = "Could not assess - AI unavailable";
   }
   
   details.assessment = assessmentDetails;
   details.questions_addressed = questionsAddressed;
+  details.scope = "Introduction only (first 3000 characters)";
+  details.advisory_note = "This dimension is advisory only - no points deducted";
+  details.heading_note = "Content may appear under various headings: Introduction, Overview, Summary, Background, etc.";
   
-  // Calculate score
-  const score = questionsAddressed === 3 ? 2 : questionsAddressed === 2 ? 1 : 0;
-  
-  const percentage = Math.round((score / 2) * 100);
+  // ADVISORY: Always award full score, suggestions only
+  const score = 2; // Always full score - advisory feedback only
+  const percentage = 100; // Always 100% - advisory only
   
   return {
     dimension_id: 31,
-    dimension_name: "Quality Checklist Compliance",
+    dimension_name: "Introduction Value & Clarity",
     score,
     max_score: 2,
     percentage,
-    status: score === 2 ? "PASS" : score === 1 ? "WARN" : "FAIL",
+    status: "INFO", // Advisory status
     issues,
     details
   };
@@ -2672,21 +2889,63 @@ export async function scoreInsights(article: ArticleInput): Promise<InsightsScor
   
   const totalPercentage = totalMax > 0 ? Math.round((totalScore / totalMax) * 100) : 0;
   
-  // Determine status with 85% threshold
-  const passThreshold = 85;
-  let status: 'pass' | 'fail';
-  let displayScore: number | null;
-  let displayPercentage: number | null;
+  // Determine status with 90% threshold
+  const passThreshold = 90;
+  const status: 'pass' | 'fail' = totalPercentage >= passThreshold ? 'pass' : 'fail';
   
-  if (totalPercentage >= passThreshold) {
-    status = 'pass';
-    displayScore = totalScore;
-    displayPercentage = totalPercentage;
-  } else {
-    status = 'fail';
-    displayScore = null;  // Show N/A
-    displayPercentage = null;  // Show N/A
+  // TRANSPARENCY FIX: Always show actual scores (never hide them)
+  const displayScore = totalScore;
+  const displayPercentage = totalPercentage;
+  
+  // Calculate gap to passing threshold
+  const pointsNeededToPass = Math.max(0, Math.ceil((passThreshold / 100) * totalMax) - totalScore);
+  const percentageGap = Math.max(0, passThreshold - totalPercentage);
+  
+  // Collect all dimensions with their impact
+  interface DimensionImpact {
+    dimension_id: number;
+    dimension_name: string;
+    category: string;
+    current_score: number;
+    max_score: number;
+    potential_gain: number;
+    percentage: number;
+    status: string;
+    issue_count: number;
   }
+  
+  const dimensionImpacts: DimensionImpact[] = [];
+  
+  // Helper to add dimensions
+  const addDimensions = (category: CategoryResult, categoryName: string) => {
+    for (const dim of category.dimensions) {
+      dimensionImpacts.push({
+        dimension_id: dim.dimension_id,
+        dimension_name: dim.dimension_name,
+        category: categoryName,
+        current_score: dim.score,
+        max_score: dim.max_score,
+        potential_gain: dim.max_score - dim.score,
+        percentage: dim.percentage,
+        status: dim.status,
+        issue_count: dim.issues.length
+      });
+    }
+  };
+  
+  addDimensions(contentQuality, 'Content Quality');
+  addDimensions(legalBrand, 'Legal & Brand');
+  addDimensions(grammarStyle, 'Grammar & Style');
+  addDimensions(formatting, 'Formatting');
+  addDimensions(structure, 'Structure');
+  
+  // Sort by potential gain (biggest impact first)
+  dimensionImpacts.sort((a, b) => b.potential_gain - a.potential_gain);
+  
+  // Identify quick wins (dimensions with issues but high max scores)
+  const quickWins = dimensionImpacts
+    .filter(d => d.potential_gain > 0 && d.issue_count > 0)
+    .slice(0, 5);
   
   const endTime = Date.now();
   const validationTime = `${((endTime - startTime) / 1000).toFixed(2)}s`;
@@ -2698,6 +2957,27 @@ export async function scoreInsights(article: ArticleInput): Promise<InsightsScor
     total_percentage: displayPercentage,
     status,
     pass_threshold: passThreshold,
+    
+    // TRANSPARENCY ADDITIONS
+    score_gap: {
+      points_needed: pointsNeededToPass,
+      percentage_gap: percentageGap,
+      message: pointsNeededToPass > 0 
+        ? `Need ${pointsNeededToPass} more points (${percentageGap}%) to pass`
+        : 'Article meets passing threshold!'
+    },
+    
+    improvement_guidance: {
+      quick_wins: quickWins.map(d => ({
+        dimension: d.dimension_name,
+        potential_gain: d.potential_gain,
+        issue_count: d.issue_count,
+        priority: d.potential_gain >= 3 ? 'HIGH' : d.potential_gain >= 2 ? 'MEDIUM' : 'LOW'
+      })),
+      total_dimensions_with_issues: dimensionImpacts.filter(d => d.issue_count > 0).length,
+      total_potential_gain: dimensionImpacts.reduce((sum, d) => sum + d.potential_gain, 0)
+    },
+    
     categories: {
       content_quality: contentQuality,     // Dims 1-3 (30 pts)
       legal_brand: legalBrand,             // Dims 4-8 (25 pts)
