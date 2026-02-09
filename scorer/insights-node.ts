@@ -178,6 +178,14 @@ const UK_US_SPELLINGS: Record<string, string> = {
 // ========== UTILITIES ==========
 
 /**
+ * Helper function to wrap text in bold markers for frontend styling
+ * Frontend should parse <b></b> tags and apply font-weight: bold
+ */
+function bold(text: string): string {
+  return `<b>${text}</b>`;
+}
+
+/**
  * Get paragraph and line reference for a position in text
  * Matches Python: get_para_line_ref()
  */
@@ -222,11 +230,72 @@ export function getParaLineRef(text: string, position: number): string {
     }
     
     if (position >= para.startPos && position <= para.endPos) {
-      return `[Para ${nonEmptyCount}]`;
+      // IMPROVED: Show complete sentence containing the issue
+      
+      // Find sentence boundaries
+      const sentenceEnders = /[.!?]/g;
+      
+      // Find start of current sentence (look backward for previous sentence ender)
+      let sentenceStart = para.startPos;
+      for (let i = position - 1; i >= para.startPos; i--) {
+        if (/[.!?]/.test(text[i])) {
+          sentenceStart = i + 1;
+          // Skip whitespace after period
+          while (sentenceStart < position && /\s/.test(text[sentenceStart])) {
+            sentenceStart++;
+          }
+          break;
+        }
+      }
+      
+      // Find end of current sentence (look forward for next sentence ender)
+      let sentenceEnd = para.endPos;
+      for (let i = position; i <= para.endPos; i++) {
+        if (/[.!?]/.test(text[i])) {
+          sentenceEnd = i + 1;
+          break;
+        }
+      }
+      
+      // Extract the complete sentence
+      const completeSentence = text.substring(sentenceStart, sentenceEnd).trim();
+      
+      // If sentence is too long (>200 chars), show with ellipsis but DON'T cut mid-word
+      if (completeSentence.length > 200) {
+        // Show 40 chars before issue
+        const beforeChars = Math.max(0, position - sentenceStart - 40);
+        const beforeContext = completeSentence.substring(beforeChars, position - sentenceStart);
+        
+        // Show rest of sentence after issue (complete the sentence)
+        const afterContext = completeSentence.substring(position - sentenceStart);
+        
+        // Find a good breaking point in afterContext (end of sentence or ~150 chars)
+        let breakPoint = afterContext.length;
+        if (afterContext.length > 150) {
+          // Look for sentence end within 150 chars
+          const sentenceEndMatch = afterContext.substring(0, 150).match(/[.!?]/);
+          if (sentenceEndMatch && sentenceEndMatch.index !== undefined) {
+            breakPoint = sentenceEndMatch.index + 1;
+          } else {
+            // Find word boundary near 150 chars
+            const wordBoundary = afterContext.substring(0, 150).lastIndexOf(' ');
+            breakPoint = wordBoundary > 100 ? wordBoundary : 150;
+          }
+        }
+        
+        const limitedAfter = afterContext.substring(0, breakPoint);
+        const prefix = beforeChars > 0 ? '...' : '';
+        const suffix = breakPoint < afterContext.length ? '...' : '';
+        
+        return `[Para ${nonEmptyCount}] "${prefix}${beforeContext}${limitedAfter}${suffix}"`;
+      } else {
+        // Show complete sentence
+        return `[Para ${nonEmptyCount}] "${completeSentence}"`;
+      }
     }
   }
   
-  // Fallback
+  // Fallback (no context available)
   return `[Para ${nonEmptyCount}]`;
 }
 
@@ -457,25 +526,60 @@ function validateAuthorities(text: string): DimensionResult {
     }
   }
   
-  // Check for DPA used for "data protection act"
+  // FIXED: Check for DPA usage using document definitions (not broken context guessing)
+  // Use the same logic as Dimension 5 (Laws & Regulations)
+  const documentDefinitions = extractAcronymDefinitions(text);
+  
+  // Check if DPA is defined in the document
   const dpaPattern = /\b(DPA)\b/g;
-  for (const match of Array.from(text.matchAll(dpaPattern))) {
-    const position = match.index || 0;
-    const start = Math.max(0, position - 100);
-    const end = Math.min(text.length, position + 100);
-    const context = text.substring(start, end).toLowerCase();
+  const dpaMatches = Array.from(text.matchAll(dpaPattern));
+  
+  if (dpaMatches.length > 0) {
+    // DPA appears in document - check how it's defined
+    const dpaDefinition = documentDefinitions.get('DPA');
     
-    if (context.includes('act') && !context.includes('authority')) {
-      const location = getParaLineRef(text, position);
-      violations.push({
-        type: 'dpa_for_act',
-        context: text.substring(start, end),
-        location
-      });
-      issues.push(
-        `${location}: 'DPA' appears to be used for 'data protection act' - ` +
-        `DPA should only be used for data protection authority.`
-      );
+    if (dpaDefinition) {
+      // DPA is defined in document - check if it's defined correctly
+      const definitionLower = dpaDefinition.toLowerCase();
+      
+      // Acceptable: "Data Protection Authority" or similar
+      const isAuthority = definitionLower.includes('authority');
+      
+      // Incorrect: "Data Protection Act" 
+      const isAct = definitionLower.includes('act') && !isAuthority;
+      
+      if (isAct) {
+        // DPA is explicitly defined as "Act" in the document - this is wrong
+        const location = getParaLineRef(text, text.indexOf(dpaDefinition));
+        violations.push({
+          type: 'dpa_defined_as_act',
+          definition: dpaDefinition,
+          location
+        });
+        issues.push(
+          `${location}: DPA is defined as '${dpaDefinition}' but should be 'Data Protection Authority'. ` +
+          `DPA should only refer to the authority, not the act.`
+        );
+      }
+      // If defined as Authority, all uses are correct - no issues to flag
+      
+    } else {
+      // DPA is used but not defined - flag for definition (not for guessing meaning)
+      const firstUse = dpaMatches[0];
+      const position = firstUse.index || 0;
+      
+      // Only flag if in first half of document
+      if (position < text.length / 2) {
+        const location = getParaLineRef(text, position);
+        violations.push({
+          type: 'dpa_not_defined',
+          location
+        });
+        issues.push(
+          `${location}: 'DPA' is not spelled out on first use. ` +
+          `Please define as 'Data Protection Authority (DPA)' on first mention.`
+        );
+      }
     }
   }
   
@@ -525,9 +629,74 @@ function validateAuthorities(text: string): DimensionResult {
   };
 }
 
+/**
+ * Extract acronym definitions from document text
+ * Handles multiple patterns including "(as amended) (PDPA)" style
+ */
+function extractAcronymDefinitions(text: string): Map<string, string> {
+  const definitions = new Map<string, string>();
+  
+  // Pattern 1: Full Name (ACRONYM) - handles multiple parentheses
+  // Matches: "Act No 9 of 2022 (as amended) (PDPA)"
+  // Strategy: Find all acronyms in parentheses, then look backwards for the full name
+  const acronymInParentheses = /\(([A-Z]{2,})\)/g;
+  
+  for (const match of text.matchAll(acronymInParentheses)) {
+    const acronym = match[1];
+    const position = match.index || 0;
+    
+    // Look backwards from the acronym position to find the full name
+    // Stop at sentence boundaries (. ! ?) or previous acronym
+    const beforeText = text.substring(Math.max(0, position - 200), position);
+    
+    // Remove any other parenthetical content (like "(as amended)")
+    const cleanedBefore = beforeText.replace(/\([^)]*\)/g, '').trim();
+    
+    // Extract the last phrase (likely the full name)
+    // Look for capitalized phrase before the parentheses
+    const fullNameMatch = cleanedBefore.match(/([A-Z][A-Za-z\s]+(?:Act|Authority|Assessment|Agency|Board|Commission|Directive|Regulation|Law|Rule|Code|Standard|Framework|Protocol|Program|Programme|System|Organization|Organisation|Office|Department|Ministry|Bureau|Institute|Center|Centre|Council|Committee|Service|Network|Platform|Policy|Scheme))(?:\s+No\.?\s+\d+(?:\s+of\s+\d{4})?)?$/);
+    
+    if (fullNameMatch && fullNameMatch[1]) {
+      const fullName = fullNameMatch[1].trim();
+      if (fullName.length >= 10 && fullName.length <= 100) {
+        definitions.set(acronym, fullName);
+      }
+    }
+  }
+  
+  // Pattern 2: Simple format without numbers/years: "Full Name (ACRONYM)"
+  const simplePattern = /([A-Z][A-Za-z\s]{10,80})\s*\(([A-Z]{2,})\)/g;
+  for (const match of text.matchAll(simplePattern)) {
+    const fullName = match[1].trim();
+    const acronym = match[2];
+    // Only add if not already defined (Pattern 1 takes precedence)
+    if (!definitions.has(acronym) && fullName.length >= 10 && fullName.length <= 100) {
+      definitions.set(acronym, fullName);
+    }
+  }
+  
+  // Pattern 3: Full Name - ACRONYM (with dash)
+  const dashPattern = /([A-Z][A-Za-z\s]{10,80})\s*[-–—]\s*([A-Z]{2,})\b/g;
+  for (const match of text.matchAll(dashPattern)) {
+    const fullName = match[1].trim();
+    const acronym = match[2];
+    if (!definitions.has(acronym) && fullName.length >= 10 && fullName.length <= 100) {
+      definitions.set(acronym, fullName);
+    }
+  }
+  
+  return definitions;
+}
+
 function validateLawsRegulations(text: string): DimensionResult {
   const issues: string[] = [];
   const details: Record<string, any> = {};
+  
+  // FIRST: Extract acronym definitions from THIS document
+  // This allows context-aware validation (e.g., if document defines DPA as "Authority",
+  // don't flag it as "Act")
+  const documentDefinitions = extractAcronymDefinitions(text);
+  details.document_definitions = Object.fromEntries(documentDefinitions);
   
   // Common acronyms that don't need spelling out
   const commonAcronyms = new Set([
@@ -538,13 +707,13 @@ function validateLawsRegulations(text: string): DimensionResult {
     // Geographic & Governmental
     'EU', 'UK', 'US', 'URL', 'HQ', 'FTC', 'SEC', 'FDA', 'NIST', 'ANSI',
     
-    // Privacy & Compliance
+    // Privacy & Compliance (KEEP THESE - they're well-known)
     'GDPR', 'CCPA', 'HIPAA', 'DPA', 'COPPA', 'NDA', 'CSR',
     
     // Technology & Computing
     'AI', 'IoT', 'IP', 'IT', 'GRC', 'CSS', 'FTP', 'HTTP', 'HTTPS',
     'ISP', 'OS', 'LAN', 'DNS', 'XML', 'UI', 'UX', 'ASCII', 'VPN', 'RSS',
-    'CMS', 'SEO', 'CPU',
+    'CMS', 'SEO', 'CPU', 'PC', 'CV',
     
     // Business & Finance
     'CEO', 'CFO', 'CTO', 'COO', 'CISO', 'VP', 'HR', 'HRM', 'PR', 'PA',
@@ -556,7 +725,7 @@ function validateLawsRegulations(text: string): DimensionResult {
     'PPC', 'PV', 'SM', 'SMB', 'SWOT', 'OC', 'WOMM',
     
     // Standards & Organizations
-    'ISO', 'IEC', 'IEEE', 'GPS', 'FAQ',
+    'ISO', 'IEC', 'IEEE', 'GPS', 'FAQ', 'CE',
     
     // Other Common
     'R&D', 'P&L', 'N/A', 'Re',
@@ -717,6 +886,11 @@ function validateLawsRegulations(text: string): DimensionResult {
   
   for (const match of Array.from(text.matchAll(standalonePattern))) {
     const acronym = match[1];
+    const position = match.index || 0;
+    
+    // Skip if followed by hyphen (e.g., "CE-marked", "US-based")
+    // These are compound words, not standalone acronyms
+    if (text[position + acronym.length] === '-') continue;
     
     // Skip if already flagged (prevents duplicates)
     if (flaggedAcronyms.has(acronym)) continue;
@@ -724,17 +898,35 @@ function validateLawsRegulations(text: string): DimensionResult {
     // Skip if known acronym or bill prefix
     if (commonAcronyms.has(acronym) || billAcronyms.has(acronym)) continue;
     
+    // Skip Roman numerals (II, III, IV, V, VI, VII, VIII, IX, X, etc.)
+    // These are commonly used in Annex II, Article III, etc.
+    if (/^(I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII)$/i.test(acronym)) continue;
+    
     // Skip if it's a real English word
     if (isEnglishWord(acronym)) continue;
     
+    // NEW: Check if defined in THIS document (FIX for DPA/PDPA false positives)
+    // If document says "Data Protection Authority (DPA)", don't flag DPA as undefined
+    if (documentDefinitions.has(acronym)) {
+      // Acronym is defined in this document - don't flag it
+      if (!acronymsFound.has(acronym)) {
+        // Add to found list with document definition
+        const defPosition = text.indexOf(`(${acronym})`);
+        acronymsFound.set(acronym, {
+          firstPosition: defPosition,
+          fullName: documentDefinitions.get(acronym)!,
+          spelledOut: true
+        });
+      }
+      continue; // Don't flag as violation
+    }
+    
     // Check if used in first half without being spelled out
-    const position = match.index || 0;
     if (!acronymsFound.has(acronym) && position < text.length / 2) {
       const location = getParaLineRef(text, position);
       acronymViolations.push({ acronym, position, location });
       issues.push(
-        `${location}: Acronym '${acronym}' may not be spelled out on first use. ` +
-        `Spell out on first mention (e.g., 'Data Privacy Impact Assessment (DPIA)').`
+        `${location}: ${bold(`Acronym '${acronym}' may not be spelled out on first use. Spell out on first mention (e.g., 'Data Privacy Impact Assessment (DPIA)').`)}`
       );
       flaggedAcronyms.add(acronym); // Mark as flagged
     }
@@ -795,7 +987,8 @@ function validateCompanyNames(text: string): DimensionResult {
   ];
   
   // Legal entity pattern
-  const legalEntityPattern = /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(Inc|Corp|LLC|Ltd|GmbH|AG|SA|NV|BV|Plc)\b/g;
+  // Note: Excludes AG when preceded by state/location names (e.g., "California AG" = Attorney General)
+  const legalEntityPattern = /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(Inc|Corp|LLC|Ltd|GmbH|SA|NV|BV|Plc)\b/g;
   
   interface CompanyMention {
     company: string;
@@ -806,6 +999,18 @@ function validateCompanyNames(text: string): DimensionResult {
   }
   
   const companyMentions: CompanyMention[] = [];
+  
+  // Helper: Check if "AG" is likely Attorney General (not a company)
+  function isAttorneyGeneral(text: string, position: number): boolean {
+    // Check 30 chars before "AG"
+    const beforeContext = text.substring(Math.max(0, position - 30), position).toLowerCase();
+    // Common patterns: "California AG", "state AG", "the AG", "AG's office"
+    const governmentIndicators = [
+      'california', 'state', 'federal', 'the ag', 'attorney general',
+      'district attorney', 'da', 'prosecutor', 'enforcement'
+    ];
+    return governmentIndicators.some(indicator => beforeContext.includes(indicator));
+  }
   
   // Check for known companies (CASE-SENSITIVE to avoid false positives)
   for (const company of knownCompanies) {
@@ -854,6 +1059,11 @@ function validateCompanyNames(text: string): DimensionResult {
   for (const match of Array.from(text.matchAll(legalEntityPattern))) {
     const companyName = match[0];
     const position = match.index || 0;
+    
+    // Skip if it's "California AG" (Attorney General, not a company)
+    if (companyName.endsWith(' AG') && isAttorneyGeneral(text, position)) {
+      continue;
+    }
     
     // Skip if already caught
     if (companyMentions.some(c => c.position === position)) continue;
@@ -1129,8 +1339,8 @@ function validateApostrophes(text: string): DimensionResult {
   // Report once per paragraph with count - SHOW ALL (no truncation)
   for (const [para, info] of paragraphsWithIssues.entries()) {
     const countText = info.count > 1 ? ` (${info.count} found)` : "";
-    issues.push(`${para}: Curly apostrophe found${countText} - must use straight apostrophe`);
-    issues.push(`   Context: ${info.context}`);
+    // Context is already in para from getParaLineRef() - no need to repeat
+    issues.push(`${para}: ${bold(`Curly apostrophe found${countText} - must use straight apostrophe`)}`);
   }
   
   // Score: Curly apostrophes are AUTOMATIC FAIL
@@ -1170,7 +1380,7 @@ function validateColons(text: string): DimensionResult {
   const spaceBeforeColonMatches = Array.from(text.matchAll(spaceBeforeColonPattern));
   
   if (spaceBeforeColonMatches.length > 0) {
-    issues.push(`⚠️ Found ${spaceBeforeColonMatches.length} space(s) before colon - Remove space`);
+    issues.push(`⚠️ Found ${spaceBeforeColonMatches.length} space(s) before colon - ${bold('Remove space')}`);
   }
   
   // Rule 2: Avoid colons in headings/titles [MASKED - Bug 3 fix]
@@ -1207,6 +1417,98 @@ function validateColons(text: string): DimensionResult {
     }
   }
   */
+  
+  // Rule 3: Capitalize first word after colon if it's a complete sentence
+  // Style guide (page 24-25): "If a complete sentence follows the colon, capitalize the first word."
+  // Example: "I faced a dilemma: I wanted a donut, but I just ate a bagel."
+  // Lists are NOT capitalized: "The types: glazed, chocolate, and pumpkin."
+  
+  const colonLowercasePattern = /:\s+([a-z])/g;
+  const colonLowercaseMatches = Array.from(text.matchAll(colonLowercasePattern));
+  
+  for (const match of colonLowercaseMatches) {
+    const position = match.index || 0;
+    const colonPos = position; // Position of the colon
+    
+    // Get text after colon (up to 100 chars for analysis)
+    const afterColon = text.substring(colonPos + 1, colonPos + 100).trim();
+    
+    // FILTER 1: Skip time formats (10:30, 3:45)
+    const beforeColon = text.substring(Math.max(0, colonPos - 3), colonPos);
+    if (/\d+$/.test(beforeColon)) {
+      continue; // This is a time like "10:30"
+    }
+    
+    // FILTER 2: Skip ratios (3:2, 5:1)
+    if (/\d+\s*$/.test(beforeColon) && /^\s*\d+/.test(afterColon)) {
+      continue; // This is a ratio like "3:2"
+    }
+    
+    // FILTER 3: Skip URLs (https://, http://)
+    if (/https?$/.test(beforeColon)) {
+      continue; // This is a URL
+    }
+    
+    // FILTER 4: Skip quoted text (starts with quote mark)
+    if (/^['"\u2018\u2019\u201c\u201d]/.test(afterColon)) {
+      continue; // Text after colon is quoted
+    }
+    
+    // FILTER 5: Skip if it starts with "e.g." or "i.e."
+    if (/^e\.g\.|^i\.e\./i.test(afterColon)) {
+      continue; // List with e.g. or i.e.
+    }
+    
+    // FILTER 6: Skip obvious lists (has comma in first 20 chars AND no verb)
+    const firstPart = afterColon.substring(0, 20);
+    const hasEarlyComma = firstPart.includes(',');
+    
+    // Get first 50 chars for sentence analysis
+    const sentenceFragment = afterColon.substring(0, 50).toLowerCase();
+    
+    // FILTER 7: Check if it's likely a complete sentence
+    // Indicators: has verb words (is, was, has, had, will, would, can, could, must, should, may, might, etc.)
+    const verbIndicators = /\b(is|are|was|were|be|been|being|am|has|have|had|will|would|can|could|must|should|may|might|shall|do|does|did|goes|went|come|came|make|makes|made|take|takes|took|get|gets|got|give|gives|gave|know|knew|think|thought|see|saw|want|wanted|need|needed|use|used|work|works|worked|provide|provides|provided|include|includes|included|require|requires|required|govern|governs|governed|comply|complies|complied|ensure|ensures|ensured|implement|implements|implemented|manage|manages|managed|reduce|reduces|reduced|face|faces|faced)\b/;
+    
+    const hasVerb = verbIndicators.test(sentenceFragment);
+    
+    // FILTER 8: Check word count (sentences usually have 3+ words)
+    const wordCount = afterColon.split(/\s+/).slice(0, 10).length;
+    
+    // DECISION LOGIC:
+    // Flag if:
+    // - Has verb indicator AND
+    // - Has 3+ words AND
+    // - Either no early comma OR (has comma but also has verb)
+    const isLikelyCompleteSentence = hasVerb && wordCount >= 3 && (!hasEarlyComma || hasVerb);
+    
+    if (isLikelyCompleteSentence) {
+      // Get just the paragraph number (NOT the full context from getParaLineRef)
+      const locationFull = getParaLineRef(text, colonPos);
+      const paraNumber = locationFull.match(/\[Para (\d+)\]/)?.[1] || '?';
+      const location = `[Para ${paraNumber}]`;
+      
+      // Get context: 5 words before colon + colon + 5 words after
+      const beforeColonText = text.substring(Math.max(0, colonPos - 100), colonPos);
+      const afterColonText = afterColon;
+      
+      // Extract last 5 words before colon
+      const beforeWords = beforeColonText.trim().split(/\s+/);
+      const last5Before = beforeWords.slice(-5).join(' ');
+      
+      // Extract first 5 words after colon
+      const afterWords = afterColonText.trim().split(/\s+/);
+      const first5After = afterWords.slice(0, 5).join(' ');
+      
+      // Build context preview with ellipsis if needed
+      const beforePreview = beforeWords.length > 5 ? '...' + last5Before : last5Before;
+      const afterPreview = afterWords.length > 5 ? first5After + '...' : first5After;
+      
+      const contextPreview = `${beforePreview}: ${afterPreview}`;
+      
+      issues.push(`${location}: "${contextPreview}" - ${bold('If a complete sentence follows the colon, capitalize the first word.')}`);
+    }
+  }
   
   // Score
   let score: number;
@@ -1248,19 +1550,96 @@ function validateCommas(text: string): DimensionResult {
   const spaceBeforeCommaMatches = Array.from(text.matchAll(spaceBeforeCommaPattern));
   
   if (spaceBeforeCommaMatches.length > 0) {
-    issues.push(`⚠️ Found ${spaceBeforeCommaMatches.length} space(s) before comma`);
+    issues.push(`⚠️ Found ${spaceBeforeCommaMatches.length} space(s) before comma - ${bold('Remove space')}`);
   }
+  
+  // Rule 1.5: Double/multiple spaces (NEW - addressing editor feedback)
+  // CRITICAL: Only check WITHIN paragraphs, not across paragraph breaks
+  // ALSO: Ignore trailing/leading spaces (common in Word, don't affect appearance)
+  // Modern style: Use single space everywhere, even after periods
+  
+  let doubleSpaceCount = 0;
+  
+  // Split text into paragraphs and track their positions
+  const paragraphs = text.split('\n');
+  let currentPosition = 0;
+  
+  for (let paraIndex = 0; paraIndex < paragraphs.length; paraIndex++) {
+    const paragraph = paragraphs[paraIndex];
+    const paraStartPos = currentPosition;
+    
+    // Skip empty paragraphs
+    if (paragraph.trim().length === 0) {
+      currentPosition += paragraph.length + 1; // +1 for newline
+      continue;
+    }
+    
+    // CRITICAL FIX: Trim the paragraph to remove leading/trailing spaces
+    // We only care about spaces WITHIN the text, not at edges
+    const trimmedPara = paragraph.trim();
+    const trimStart = paragraph.indexOf(trimmedPara);
+    
+    // Check for double spaces ONLY within the trimmed paragraph
+    const doubleSpacePattern = /  +/g;
+    let match;
+    
+    while ((match = doubleSpacePattern.exec(trimmedPara)) !== null) {
+      const spaceCount = match[0].length;
+      const positionInTrimmed = match.index;
+      const positionInOriginal = trimStart + positionInTrimmed;
+      const absolutePosition = paraStartPos + positionInOriginal;
+      
+      doubleSpaceCount++;
+      
+      // Show context that INCLUDES the double spaces (with visual markers)
+      const contextBefore = Math.max(0, positionInTrimmed - 30);
+      const contextAfter = Math.min(trimmedPara.length, positionInTrimmed + spaceCount + 30);
+      const beforeText = trimmedPara.substring(contextBefore, positionInTrimmed);
+      const afterText = trimmedPara.substring(positionInTrimmed + spaceCount, contextAfter);
+      
+      // Show the spaces with [X SPACES] marker so editor can see them
+      const visualContext = `${beforeText}[${spaceCount} SPACES]${afterText}`;
+      
+      // Count non-empty paragraphs up to this point for paragraph number
+      const nonEmptyParasUpToHere = paragraphs.slice(0, paraIndex + 1).filter(p => p.trim().length > 0).length;
+      
+      issues.push(`[Para ${nonEmptyParasUpToHere}] "${visualContext.trim()}" - ${bold(`Multiple spaces (${spaceCount}) - Use single space`)}`);
+    }
+    
+    currentPosition += paragraph.length + 1; // +1 for newline
+  }
+  
+  details.double_spaces_found = doubleSpaceCount;
   
   // Rule 2: Oxford comma detection
   // Pattern: "X, Y and Z" should be "X, Y, and Z"
   const oxfordCommaPattern = /,\s+([a-zA-Z]+)\s+and\s+([a-zA-Z]+)/g;
   const potentialViolations = Array.from(text.matchAll(oxfordCommaPattern));
   
+  // Common job title patterns that use "and" (not lists)
+  const titlePatterns = [
+    // Primary titles with "and" (Founder and Principal, CEO and President, etc.)
+    /\b(founder|co-founder|ceo|cfo|cto|coo|ciso|owner|president|director|manager|officer|partner|member|head|chief|lead|senior)\s+and\s+(founder|co-founder|ceo|cfo|cto|coo|ciso|owner|president|director|manager|officer|partner|member|head|chief|lead|senior|principal|advisor|consultant|analyst|specialist|expert|associate|assistant)\b/i,
+    // Compound titles (Vice President, Managing Partner) - these DON'T need "and" check
+    /\b(vice|deputy|assistant|associate|managing|executive|operating|financial|technical)\s+(president|partner|director|member|officer)\b/i
+  ];
+  
+  function isJobTitle(context: string): boolean {
+    const lowerContext = context.toLowerCase();
+    // Check if it's a compound title OR a title with "and"
+    return titlePatterns.some(pattern => pattern.test(lowerContext));
+  }
+  
   for (const match of potentialViolations) {
     const pos = match.index || 0;
     const contextStart = Math.max(0, pos - 100);
     const contextEnd = Math.min(text.length, pos + 100);
     const context = text.substring(contextStart, contextEnd);
+    
+    // Skip job title patterns (e.g., "Founder and Principal")
+    if (isJobTitle(context)) {
+      continue;
+    }
     
     // Skip date ranges and compound sentences
     const precedingStart = Math.max(0, pos - 50);
@@ -1283,10 +1662,7 @@ function validateCommas(text: string): DimensionResult {
     
     // This looks like a real list violation
     const location = getParaLineRef(text, pos);
-    const shortContextStart = Math.max(0, pos - 20);
-    const shortContextEnd = Math.min(text.length, pos + 40);
-    const shortContext = text.substring(shortContextStart, shortContextEnd);
-    issues.push(`${location}: Possible missing Oxford comma - Add comma before 'and' in list. Context: '...${shortContext}...'`);
+    issues.push(`${location} - ${bold("Possible missing Oxford comma - Add comma before 'and' in list")}`);
   }
   
   // Score (limit to first 5 issues for reporting)
@@ -1307,20 +1683,16 @@ function validateCommas(text: string): DimensionResult {
   
   const percentage = Math.round((score / 2) * 100);
   
-  // Limit issues to first 5 for display
-  const displayIssues = issues.slice(0, 5);
-  if (issues.length > 5) {
-    displayIssues.push(`... and ${issues.length - 5} more comma issues`);
-  }
+  // SHOW ALL ISSUES - no truncation (editors need to fix everything)
   
   return {
     dimension_id: 11,
-    dimension_name: "Commas",
+    dimension_name: "Commas & Double Spaces",
     score,
     max_score: 2,
     percentage,
     status: score === 2 ? "PASS" : score >= 1 ? "WARN" : "FAIL",
-    issues: displayIssues,
+    issues: issues,
     details
   };
 }
@@ -1397,9 +1769,10 @@ function validateQuotationMarks(text: string): DimensionResult {
   // Show ONE message per paragraph with violations
   for (const [para, quotes] of violationsByPara.entries()) {
     const pairCount = Math.ceil(quotes.length / 2); // Estimate pairs in this paragraph
-    issues.push(`[${para}]: ${pairCount} curly quote pair${pairCount !== 1 ? 's' : ''} found - must use straight quotes`);
-    // Show context from first quote in paragraph
-    issues.push(`   Context: ${quotes[0].context}`);
+    // Use the full location from first quote (includes context from getParaLineRef)
+    const location = quotes[0].location;
+    // Format: [Para X] "...context..." - Issue description (consistent with other dimensions)
+    issues.push(`${location} - ${bold(`${pairCount} curly quote pair${pairCount !== 1 ? 's' : ''} found - must use straight quotes`)}`);
   }
   
   // Graduated scoring based on PAIRS (not individual quotes)
@@ -1449,7 +1822,7 @@ function validateEllipses(text: string): DimensionResult {
   const improperMatches = Array.from(text.matchAll(improperPattern));
   
   if (improperMatches.length > 0) {
-    issues.push(`⚠️ Found ${improperMatches.length} improper ellipses - Use three periods (...) with no spaces`);
+    issues.push(`⚠️ Found ${improperMatches.length} improper ellipses - ${bold('Use three periods (...) with no spaces')}`);
     
     for (let i = 0; i < Math.min(5, improperMatches.length); i++) {
       const match = improperMatches[i];
@@ -1458,7 +1831,7 @@ function validateEllipses(text: string): DimensionResult {
       const contextStart = Math.max(0, pos - 30);
       const contextEnd = Math.min(text.length, pos + 30);
       const context = text.substring(contextStart, contextEnd);
-      issues.push(`  ${location}: '${match[0]}' → Context: '...${context}...'`);
+      issues.push(`  ${location}: ${bold(`'${match[0]}' → Use '...' instead`)}`);
     }
   }
   
@@ -1485,7 +1858,7 @@ function validateSemicolons(text: string): DimensionResult {
   const spaceBeforeMatches = Array.from(text.matchAll(spaceBeforePattern));
   
   if (spaceBeforeMatches.length > 0) {
-    issues.push(`⚠️ Found ${spaceBeforeMatches.length} space(s) before semicolon - Remove spaces`);
+    issues.push(`⚠️ Found ${spaceBeforeMatches.length} space(s) before semicolon - ${bold('Remove spaces')}`);
     
     for (let i = 0; i < Math.min(5, spaceBeforeMatches.length); i++) {
       const match = spaceBeforeMatches[i];
@@ -1494,7 +1867,7 @@ function validateSemicolons(text: string): DimensionResult {
       const contextStart = Math.max(0, pos - 30);
       const contextEnd = Math.min(text.length, pos + 30);
       const context = text.substring(contextStart, contextEnd);
-      issues.push(`  ${location}: Context: '...${context}...'`);
+      issues.push(`  ${location}: ${bold(`Remove space before ';'`)}`);
     }
   }
   
@@ -1528,7 +1901,7 @@ function validateAmpersands(text: string): DimensionResult {
     
     // Skip if it looks like a company name (preceded by capital letters)
     if (!/[A-Z][A-Z&]+/.test(context)) {
-      issues.push("⚠️ Use 'and' instead of '&' in text");
+      issues.push(`⚠️ ${bold("Use 'and' instead of '&' in text")}`);
       if (issues.length >= 3) break; // Limit to 3 examples
     }
   }
@@ -1845,6 +2218,10 @@ function validateNumbers(text: string): DimensionResult {
     const charBefore = position > 0 ? text[position - 1] : '';
     const charAfter = position < text.length - 1 ? text[position + 1] : '';
     
+    // Skip if digit is part of an acronym/code (NIS2, COVID19, H1N1, ISO27001, etc.)
+    // Check if there's a letter immediately before OR after the digit
+    if (/[a-zA-Z]/.test(charBefore) || /[a-zA-Z]/.test(charAfter)) continue;
+    
     // Skip if it's part of a classification label (Category 1, Type 2, Class A, etc.)
     // Pattern: Capitalized word followed by space and digit
     // Examples: "Category 1", "Type 2", "Class 3", "Level 4", "Tier 5"
@@ -1856,8 +2233,8 @@ function validateNumbers(text: string): DimensionResult {
     if (charAfter === ')' || charAfter === '.') continue;
     if (charBefore === '(' || charBefore === '[') continue;
     
-    // Skip Article/Section/Page/Chapter references
-    if (['article', 'section', 'page', 'chapter', 'paragraph', 'clause'].some(kw => context.includes(kw))) continue;
+    // Skip Article/Section/Page/Chapter references (including abbreviations)
+    if (['article', 'art.', 'art', 'section', 'sec.', 'sec', 'page', 'chapter', 'ch.', 'paragraph', 'clause', 'regulation', 'reg.'].some(kw => context.includes(kw))) continue;
     
     // Skip numbers before magnitude words (million, billion, thousand, hundred)
     if (/\d\s+(million|billion|thousand|hundred|dozen)/i.test(text.substring(position, position + 20))) continue;
@@ -1888,7 +2265,7 @@ function validateNumbers(text: string): DimensionResult {
     max_score: 1.5,
     percentage,
     status: score === 1.5 ? "PASS" : score >= 1 ? "WARN" : "FAIL",
-    issues: issues.slice(0, 5),
+    issues: issues,  // Show ALL issues - editors need to fix everything
     details: { issues_count: issues.length }
   };
 }
@@ -1917,16 +2294,18 @@ function validateDates(text: string): DimensionResult {
   const details: Record<string, any> = {};
   
   // UK date format pattern (CRITICAL VIOLATION - AUTO FAIL)
-  // Pattern: "24 April 2025" or "16 March 2025"
-  const ukDatePattern = /\b(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})\b/gi;
+  // Pattern: "24 April 2025" or "16 March 2025" or "8th January 2024" or "21st July 2024"
+  // Now catches ordinal suffixes (st, nd, rd, th)
+  const ukDatePattern = /\b(\d{1,2})(st|nd|rd|th)?\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})\b/gi;
   const ukDates = Array.from(text.matchAll(ukDatePattern));
   
   for (const match of ukDates) {
     const day = match[1];
-    const month = match[2];
-    const year = match[3];
+    const ordinal = match[2] || ''; // st, nd, rd, th (optional)
+    const month = match[3];
+    const year = match[4];
     const ukFormat = match[0];
-    const usFormat = `${month} ${day}, ${year}`;
+    const usFormat = `${month} ${day}, ${year}`; // US format doesn't use ordinals
     const location = getParaLineRef(text, match.index || 0);
     
     issues.push(
@@ -1982,8 +2361,38 @@ function validateDecimals(text: string): DimensionResult {
   const issues: string[] = [];
   
   // Check for decimals without leading zero (e.g., .5 instead of 0.5)
+  // BUT exclude:
+  // 1. Abbreviations like Art.36, Fig.5, Sec.15
+  // 2. Legal subsection references like "Articles 5.35, .36, and .40"
   const noLeadingZeroPattern = /(?<!\d)\.(\d+)/g;
-  const noLeadingZero = Array.from(text.matchAll(noLeadingZeroPattern));
+  
+  const allMatches = Array.from(text.matchAll(noLeadingZeroPattern));
+  const validReferences = new Set<number>();
+  
+  // Pattern 1: Abbreviations (Art.36, Fig.5, Sec.15, etc.)
+  const abbreviationPattern = /\b[A-Z][a-z]{0,4}\.(\d+)/g;
+  for (const match of text.matchAll(abbreviationPattern)) {
+    if (match.index !== undefined) {
+      // Save the position of the "." not the start of the word
+      const dotPosition = match.index + match[0].indexOf('.');
+      validReferences.add(dotPosition);
+    }
+  }
+  
+  // Pattern 2: Legal subsection shorthand (e.g., "Articles 5.35, .36, and .40")
+  // Look for context: comma or "and" before the decimal
+  for (const match of allMatches) {
+    if (match.index !== undefined) {
+      const beforeContext = text.substring(Math.max(0, match.index - 10), match.index);
+      // Check if preceded by comma+space or "and " (legal reference shorthand)
+      if (/[,;]\s*$/.test(beforeContext) || /\band\s*$/.test(beforeContext)) {
+        validReferences.add(match.index);
+      }
+    }
+  }
+  
+  // Only flag matches that are NOT valid references
+  const noLeadingZero = allMatches.filter(match => !validReferences.has(match.index || 0));
   
   for (const match of noLeadingZero.slice(0, 5)) {
     const location = getParaLineRef(text, match.index || 0);
@@ -2227,7 +2636,8 @@ Respond JSON only:
   }
   
   // Check for long sentences (>40 words) - advisory only
-  const sentences = text.split(/[.!?]+\s+|\n\n+/).map(s => s.trim()).filter(s => s.length > 0);
+  // Improved pattern: handles quotes after punctuation (e.g., 'sentence.' or "sentence.")
+  const sentences = text.split(/[.!?]+["']?\s+|\n\n+/).map(s => s.trim()).filter(s => s.length > 0);
   const longSentences: any[] = [];
   
   for (const sent of sentences) {
@@ -2416,16 +2826,32 @@ Respond JSON only:
       
       // Generate US suggestion based on pattern
       let usSuggestion: string;
-      if (matchedText.toLowerCase().includes('is') && !matchedText.toLowerCase().includes('iz')) {
+      if (matchedText.toLowerCase() === 'grey') {
+        usSuggestion = 'gray';
+      } else if (matchedText.toLowerCase().includes('is') && !matchedText.toLowerCase().includes('iz')) {
         usSuggestion = matchedText.replace(/is/gi, (m) => m === 'is' ? 'iz' : 'Iz');
       } else if (matchedText.toLowerCase().includes('our')) {
         usSuggestion = matchedText.replace(/our/gi, (m) => m === 'our' ? 'or' : 'Or');
       } else if (matchedText.toLowerCase() === 'programme' || matchedText.toLowerCase() === 'programmes') {
         usSuggestion = 'program' + (matchedText.endsWith('s') ? 's' : '');
+      } else if (matchedText.toLowerCase().endsWith('ence')) {
+        // licence → license, defence → defense, Licence → License, LICENCE → LICENSE
+        const base = matchedText.substring(0, matchedText.length - 4);
+        if (matchedText === matchedText.toUpperCase()) {
+          // All uppercase: LICENCE → LICENSE
+          usSuggestion = base + 'ENSE';
+        } else if (matchedText[0] === matchedText[0].toUpperCase()) {
+          // Title case: Licence → License
+          usSuggestion = base + 'ense';
+        } else {
+          // Lowercase: licence → license
+          usSuggestion = base + 'ense';
+        }
       } else if (matchedText.toLowerCase().endsWith('re')) {
         usSuggestion = matchedText.substring(0, matchedText.length - 2) + 'er';
       } else {
-        usSuggestion = "[see style guide]";
+        // Use the matched text as-is (the pattern already matched a UK variant)
+        usSuggestion = matchedText;
       }
       
       ukViolations.push({
@@ -2450,10 +2876,10 @@ Respond JSON only:
     }
     
     score = Math.max(0, score - penalty);
-    issues.push(`❌ UK spelling detected (${ukViolations.length} instances, -${penalty} points) - Use US English`);
+    issues.push(`❌ UK spelling detected (${ukViolations.length} instances, -${penalty} points) - ${bold('Use US English')}`);
     // Show ALL violations with details
     for (const v of ukViolations) {
-      issues.push(`  ${v.location}: '${v.uk_spelling}' → '${v.us_spelling}'`);
+      issues.push(`  ${v.location}: ${bold(`'${v.uk_spelling}' → '${v.us_spelling}'`)}`);
     }
   }
   
@@ -2480,19 +2906,37 @@ function validateVoice(text: string): DimensionResult {
   let score = 10; // Start with full score
   
   // Check for first-person singular (always wrong)
-  const firstPersonMatches = Array.from(text.matchAll(/\b(I|my)\b/gi));
+  // IMPORTANT: Don't match "i" in "(i)", "(i.", "i.e.", "i.e.,", etc.
+  // Use negative lookbehind for "(" and negative lookahead for "." or ")"
+  const firstPersonPattern = /\b(I|my)\b(?![.)])/gi;
+  const allMatches = Array.from(text.matchAll(firstPersonPattern));
+  
+  // Filter out false positives:
+  // - "i" preceded by "(" (Roman numerals like "(i)", "(i.")
+  // - "i" in "i.e." pattern
+  const firstPersonMatches = allMatches.filter(match => {
+    const pos = match.index || 0;
+    const before = text[pos - 1] || '';
+    const after = text.substring(pos + match[0].length, pos + match[0].length + 3);
+    
+    // Skip if preceded by "(" (Roman numerals)
+    if (before === '(') return false;
+    
+    // Skip if part of "i.e." pattern
+    if (match[0].toLowerCase() === 'i' && after.startsWith('.e.')) return false;
+    
+    return true;
+  });
   
   if (firstPersonMatches.length > 0) {
     score -= 3;
-    issues.push(`⚠️ First-person singular: ${firstPersonMatches.length} instances`);
+    issues.push(`⚠️ First-person singular: ${firstPersonMatches.length} instances - ${bold('Use third-person or author name instead')}`);
     
     // Show all instances with paragraph numbers AND context
     for (const match of firstPersonMatches) {
       const location = getParaLineRef(text, match.index || 0);
-      const contextStart = Math.max(0, match.index - 40);
-      const contextEnd = Math.min(text.length, match.index + match[0].length + 40);
-      const context = text.substring(contextStart, contextEnd).replace(/\s+/g, ' ');
-      issues.push(`  ${location}: ...${context}...`);
+      const word = match[0];
+      issues.push(`  ${location} - ${bold(`Replace "${word}" with third-person (e.g., "the author", "this article")`)}`);
     }
   }
   
@@ -2526,16 +2970,13 @@ function validateVoice(text: string): DimensionResult {
     while ((match = regex.exec(text)) !== null) {
       passiveCount++;
       
-      // Collect ALL instances
+      // Collect ALL instances with full context from getParaLineRef
       const location = getParaLineRef(text, match.index);
-      const contextStart = Math.max(0, match.index - 40);
-      const contextEnd = Math.min(text.length, match.index + match[0].length + 40);
-      const context = text.substring(contextStart, contextEnd).replace(/\s+/g, ' ');
       
       passiveExamples.push({
         location,
         text: match[0],
-        context: `...${context}...`
+        context: '' // Context is already in location
       });
     }
   }
@@ -2556,9 +2997,9 @@ function validateVoice(text: string): DimensionResult {
     score = Math.max(0, score - passivePenalty);
     issues.push(`⚠️ Passive voice detected (${passiveCount} instances, -${passivePenalty} points) - Use active voice`);
     
-    // Show ALL instances with location
+    // Show ALL instances with location (which includes context)
     for (const example of passiveExamples) {
-      issues.push(`  ${example.location}: ${example.context}`);
+      issues.push(`  ${example.location}`);
     }
   }
   
@@ -2594,10 +3035,14 @@ async function validateStandardStructure(text: string): Promise<DimensionResult>
     const trimmed = line.trim();
     if (trimmed.length > 0 && trimmed.length < 150) {
       // Heading detection logic
+      const wordCount = trimmed.split(/\s+/).length;
       const isHeading = 
         trimmed.endsWith(':') ||
-        (/^[A-Z][A-Za-z\s,&-]+$/.test(trimmed) && trimmed.split(/\s+/).length >= 3) ||
-        /^[A-Z][a-z]+$/.test(trimmed) && ['introduction', 'background', 'overview', 'conclusion', 'summary'].includes(trimmed.toLowerCase()) ||
+        // Multi-word headings (3+ words) - including those with colons
+        (/^[A-Z][A-Za-z\s,&:'-]+$/.test(trimmed) && wordCount >= 3) ||
+        // Single or double-word headings (1-2 words, including apostrophes)
+        (/^[A-Z][A-Za-z\s']+$/.test(trimmed) && wordCount <= 2) ||
+        // Numbered sections
         /^\d+\.\s+[A-Z]/.test(trimmed);
       
       if (isHeading) {
@@ -2608,6 +3053,112 @@ async function validateStandardStructure(text: string): Promise<DimensionResult>
   
   let score = 8; // Start with full score
   
+  // NEW: Sentence case validation for titles/headings (addressing editor feedback)
+  // Article titles should use sentence case: "Provider, deployer, user? Mapping AI roles..."
+  // NOT title case: "Provider, Deployer, User? Mapping AI Roles..."
+  
+  const sentenceCaseIssues: string[] = [];
+  
+  // Known proper nouns that should always be capitalized  
+  const properNouns = new Set([
+    // Geographic
+    'EU', 'UK', 'US', 'USA', 'European', 'Union', 'United', 'States', 'Kingdom',
+    
+    // Technology/AI
+    'AI', 'API', 'Internet', 'Web', 'Cloud',
+    
+    // Legal terms (when they refer to specific laws/regulations)
+    'Act', 'Regulation', 'Directive', 'Law', 'Code', 'Convention',
+    'GDPR', 'CCPA', 'HIPAA', 'NIS2', 'DORA',
+    
+    // Organizations
+    'Commission', 'Parliament', 'Council', 'Authority', 'Office'
+  ]);
+  
+  for (const heading of headings) {
+    const words = heading.split(/\s+/);
+    const errors: string[] = [];
+    
+    // First, identify law names (pattern: "X Y Z Act/Regulation/Directive")
+    const lawNameWords = new Set<number>();
+    for (let i = 0; i < words.length; i++) {
+      const cleanWord = words[i].replace(/[^a-zA-Z]/g, '');
+      
+      // If this word is Act/Regulation/Directive, mark previous words as part of law name
+      if (['Act', 'Regulation', 'Directive', 'Law', 'Code', 'Convention'].includes(cleanWord)) {
+        lawNameWords.add(i); // The Act/Regulation word itself
+        // Go backwards and mark preceding capitalized words as part of the law name
+        for (let j = i - 1; j >= 0; j--) {
+          const prevClean = words[j].replace(/[^a-zA-Z]/g, '');
+          if (prevClean.length > 0 && prevClean[0].match(/[A-Z]/)) {
+            lawNameWords.add(j);
+          } else {
+            break; // Stop at first lowercase word
+          }
+        }
+      }
+    }
+    
+    // Identify sentence boundaries (after . ? ! - next word should be capitalized)
+    const sentenceStarts = new Set<number>();
+    sentenceStarts.add(0); // First word always starts a sentence
+    
+    for (let i = 0; i < words.length - 1; i++) {
+      const word = words[i];
+      // If word ends with . ? ! then next word starts a sentence
+      if (/[.?!]['"]?\s*$/.test(word)) {
+        sentenceStarts.add(i + 1);
+      }
+    }
+    
+    for (let i = 0; i < words.length; i++) {
+      const word = words[i];
+      const cleanWord = word.replace(/[^a-zA-Z-]/g, '');
+      
+      if (cleanWord.length === 0) continue;
+      
+      // Words that start sentences should always be capitalized
+      if (sentenceStarts.has(i)) {
+        if (cleanWord[0] && !cleanWord[0].match(/[A-Z]/)) {
+          errors.push(`'${word}' should be capitalized (starts sentence)`);
+        }
+        continue;
+      }
+      
+      // Skip if part of a law name
+      if (lawNameWords.has(i)) continue;
+      
+      // Check if it's a proper noun
+      const isProperNoun = properNouns.has(cleanWord) || 
+                          /^[A-Z]{2,}$/.test(cleanWord); // Acronyms
+      
+      if (isProperNoun) {
+        if (cleanWord[0] && !cleanWord[0].match(/[A-Z]/)) {
+          errors.push(`'${word}' should be capitalized (proper noun)`);
+        }
+      } else {
+        // Common nouns should be lowercase
+        if (cleanWord[0] && cleanWord[0].match(/[A-Z]/) && cleanWord.length > 1) {
+          if (!/^[A-Z]{2,}$/.test(cleanWord)) {
+            errors.push(`'${word}' should be lowercase (common noun)`);
+          }
+        }
+      }
+    }
+    
+    if (errors.length > 0) {
+      sentenceCaseIssues.push(`Heading "${heading.substring(0, 60)}${heading.length > 60 ? '...' : ''}" - ${errors.join('; ')}`);
+    }
+  }
+  
+  if (sentenceCaseIssues.length > 0) {
+    score -= 1;
+    issues.push(`⚠️ Sentence case issues in ${sentenceCaseIssues.length} heading(s):`);
+    sentenceCaseIssues.forEach(issue => issues.push(`  • ${issue}`));
+  }
+  
+  details.sentence_case_issues = sentenceCaseIssues.length;
+  
   // Check for title
   const firstLines = lines.slice(0, 5).join('\n');
   if (headings.length === 0 || !firstLines.trim()) {
@@ -2615,9 +3166,58 @@ async function validateStandardStructure(text: string): Promise<DimensionResult>
     score -= 1;
   }
   
-  // Check for introduction
+  // Check for introduction - both explicit heading AND implicit intro
   const introKeywords = ['introduction', 'overview', 'background', 'context'];
-  const hasIntro = headings.some(h => introKeywords.some(kw => h.toLowerCase().includes(kw)));
+  const hasExplicitIntro = headings.some(h => introKeywords.some(kw => h.toLowerCase().includes(kw)));
+  
+  let hasImplicitIntro = false;
+  
+  // If no explicit intro heading, check if first paragraphs serve as introduction
+  if (!hasExplicitIntro) {
+    // Get first 3 non-empty paragraphs (excluding title)
+    const paragraphs = text.split('\n')
+      .map(p => p.trim())
+      .filter(p => p.length > 50) // Skip very short lines (likely title/author)
+      .slice(0, 3);
+    
+    if (paragraphs.length >= 2) {
+      const firstParas = paragraphs.join('\n\n');
+      
+      // Use AI to detect if these paragraphs serve as introduction
+      const introPrompt = `Analyze if the following text serves as an introduction/overview for a legal/regulatory article.
+
+An introduction typically:
+- Sets context or explains why the topic matters
+- Introduces the main subject or law being discussed
+- Provides background or recent developments
+- May mention the author at the start
+
+Text to analyze:
+${firstParas.substring(0, 1000)}
+
+Respond with JSON:
+{"is_introduction": true/false, "reason": "brief explanation"}`;
+
+      const aiResponse = await callClaude(introPrompt, 300);
+      
+      try {
+        const jsonMatch = aiResponse.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const result = JSON.parse(jsonMatch[0]);
+          hasImplicitIntro = result.is_introduction === true;
+          if (hasImplicitIntro) {
+            details.implicit_intro_detected = true;
+            details.intro_reason = result.reason;
+          }
+        }
+      } catch (e) {
+        // If AI fails, assume implicit intro exists if text starts with substantive content
+        hasImplicitIntro = paragraphs[0].length > 100;
+      }
+    }
+  }
+  
+  const hasIntro = hasExplicitIntro || hasImplicitIntro;
   
   if (!hasIntro) {
     issues.push("Missing: Introduction/Overview section");
@@ -2625,7 +3225,16 @@ async function validateStandardStructure(text: string): Promise<DimensionResult>
   }
   
   // Check for conclusion (OPTIONAL - warning only, no points deducted)
-  const conclusionKeywords = ['conclusion', 'summary', 'key takeaways', 'looking ahead'];
+  const conclusionKeywords = [
+    'conclusion', 'summary', 'key takeaways', 'looking ahead',
+    'outlook', 'final remarks', 'final thoughts', 'closing remarks',
+    'what\'s next', 'moving forward', 'in conclusion', 'to conclude',
+    'takeaways', 'wrapping up',
+    // NEW: Additional variations (addressing editor feedback)
+    'overall observations', 'final observations', 'concluding remarks',
+    'concluding thoughts', 'in summary', 'to summarize', 'to sum up',
+    'closing thoughts', 'closing observations'
+  ];
   const hasConclusion = headings.some(h => conclusionKeywords.some(kw => h.toLowerCase().includes(kw)));
   
   if (!hasConclusion) {
@@ -2647,9 +3256,12 @@ async function validateStandardStructure(text: string): Promise<DimensionResult>
     const paragraphs = text.split('\n\n').filter(p => p.trim());
     let numberedText = '';
     
+    // Build text from complete paragraphs only (don't truncate mid-paragraph)
     for (let i = 0; i < Math.min(30, paragraphs.length); i++) {
-      numberedText += `[Para ${i + 1}]: ${paragraphs[i].trim()}\n\n`;
-      if (numberedText.length > 7500) break;
+      const paraText = `[Para ${i + 1}]: ${paragraphs[i].trim()}\n\n`;
+      // Only add if we have room for the COMPLETE paragraph
+      if (numberedText.length + paraText.length > 8000) break;
+      numberedText += paraText;
     }
     
     const prompt = `You are reviewing a legal/regulatory Insights article for OneTrust DataGuidance.
@@ -2658,16 +3270,18 @@ Document structure: ${headings.length} sections
 Headings: ${headings.slice(0, 5).join(', ') || 'None'}
 
 Text (first 30 paragraphs):
-${numberedText.substring(0, 8000)}
+${numberedText}
 
 YOUR TASK: Flag ONLY genuinely harmful flow problems that would confuse readers or make the document unusable.
 
 EXTREMELY HIGH BAR - ONLY FLAG IF:
-1. A sentence ACTUALLY cuts off incomplete mid-thought
+1. A sentence ACTUALLY cuts off incomplete mid-thought (NOT just because it's near the end of the text shown - the full document continues)
 2. Direct contradictions within same section
 3. Complete logical disconnect between major sections with no transition
 
-ASSUME THE DOCUMENT IS PROFESSIONALLY WRITTEN. Default to NO ISSUES unless absolutely certain something is broken.
+CRITICAL: You are seeing a SUBSET of the document. DO NOT flag sentences as incomplete just because they appear near the end of the text provided - the document continues beyond what you see.
+
+ASSUME THE DOCUMENT IS PROFESSIONALLY WRITTEN. Default to NO ISSUES unless absolutely certain something is broken IN THE TEXT PROVIDED.
 
 RESPONSE FORMAT - If you find ZERO genuine issues (most likely):
 {"has_flow_issues": false, "issues": []}
