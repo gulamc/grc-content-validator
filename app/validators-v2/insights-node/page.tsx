@@ -48,6 +48,21 @@ export default function InsightsValidatorPage() {
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [expandedDimensions, setExpandedDimensions] = useState<Set<string>>(new Set());
 
+  // Helper function to render text with bold markers
+  const renderWithBold = (text: string) => {
+    // Split by <b> tags
+    const parts = text.split(/(<b>.*?<\/b>)/g);
+    
+    return parts.map((part, i) => {
+      if (part.startsWith('<b>') && part.endsWith('</b>')) {
+        // Extract text inside <b> tags
+        const boldText = part.replace(/<\/?b>/g, '');
+        return <span key={i} className="font-bold">{boldText}</span>;
+      }
+      return <span key={i}>{part}</span>;
+    });
+  };
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       setFile(e.target.files[0]);
@@ -345,7 +360,7 @@ export default function InsightsValidatorPage() {
                                 <ul className="space-y-2">
                                   {dim.issues.map((issue, idx) => (
                                     <li key={idx} className="text-sm text-gray-700 pl-4 border-l-2 border-red-300 py-1">
-                                      {issue}
+                                      {renderWithBold(issue)}
                                     </li>
                                   ))}
                                 </ul>
