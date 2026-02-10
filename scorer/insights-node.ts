@@ -3036,10 +3036,25 @@ async function validateStandardStructure(text: string): Promise<DimensionResult>
     if (trimmed.length > 0 && trimmed.length < 150) {
       // Heading detection logic
       const wordCount = trimmed.split(/\s+/).length;
+      
+      // Words that indicate body text, not headings
+      const bodyTextStarters = [
+        'interestingly', 'importantly', 'notably', 'significantly',
+        'in addition', 'furthermore', 'moreover', 'however',
+        'both', 'all', 'some', 'many', 'several', 'these',
+        'the following', 'as noted', 'as mentioned', 'for example'
+      ];
+      
+      const firstTwoWords = trimmed.split(/\s+/).slice(0, 2).join(' ').toLowerCase();
+      const isBodyTextStarter = bodyTextStarters.some(starter => 
+        firstTwoWords.startsWith(starter) || trimmed.toLowerCase().startsWith(starter)
+      );
+      
       const isHeading = 
-        trimmed.endsWith(':') ||
-        // Multi-word headings (3+ words) - including those with colons
-        (/^[A-Z][A-Za-z\s,&:'-]+$/.test(trimmed) && wordCount >= 3) ||
+        // Short lines ending with : (≤ 8 words) that don't start with body text indicators
+        (trimmed.endsWith(':') && wordCount <= 8 && !isBodyTextStarter) ||
+        // Multi-word headings (3+ words) - must be short (≤ 12 words) and not body text
+        (/^[A-Z][A-Za-z\s,&:'-]+$/.test(trimmed) && wordCount >= 3 && wordCount <= 12 && !isBodyTextStarter) ||
         // Single or double-word headings (1-2 words, including apostrophes)
         (/^[A-Z][A-Za-z\s']+$/.test(trimmed) && wordCount <= 2) ||
         // Numbered sections
@@ -3061,8 +3076,30 @@ async function validateStandardStructure(text: string): Promise<DimensionResult>
   
   // Known proper nouns that should always be capitalized  
   const properNouns = new Set([
-    // Geographic
+    // Geographic - Countries
     'EU', 'UK', 'US', 'USA', 'European', 'Union', 'United', 'States', 'Kingdom',
+    'Australia', 'Australian', 'Canada', 'Canadian', 'Germany', 'German', 
+    'France', 'French', 'Italy', 'Italian', 'Spain', 'Spanish',
+    'Japan', 'Japanese', 'China', 'Chinese', 'India', 'Indian',
+    'Brazil', 'Brazilian', 'Mexico', 'Mexican', 'Argentina', 'Argentinian',
+    'Russia', 'Russian', 'Korea', 'Korean', 'Netherlands', 'Dutch',
+    'Belgium', 'Belgian', 'Sweden', 'Swedish', 'Norway', 'Norwegian',
+    'Denmark', 'Danish', 'Finland', 'Finnish', 'Poland', 'Polish',
+    'Ireland', 'Irish', 'Portugal', 'Portuguese', 'Greece', 'Greek',
+    'Austria', 'Austrian', 'Switzerland', 'Swiss', 'New Zealand',
+    'Singapore', 'Thailand', 'Vietnam', 'Malaysia', 'Indonesia',
+    'Philippines', 'Pakistan', 'Bangladesh', 'Egypt', 'South Africa',
+    'Nigeria', 'Kenya', 'Israel', 'Turkey', 'Saudi Arabia', 'UAE',
+    
+    // Geographic - Regions
+    'Europe', 'Asia', 'Africa', 'Americas', 'Oceania',
+    'Commonwealth', 'APAC', 'EMEA', 'LATAM',
+    
+    // Geographic - Major Cities (when used as proper nouns)
+    'London', 'Paris', 'Berlin', 'Rome', 'Madrid', 'Brussels',
+    'Sydney', 'Melbourne', 'Canberra', 'Auckland',
+    'Toronto', 'Ottawa', 'Vancouver', 'Montreal',
+    'New York', 'Washington', 'California', 'Texas', 'Florida',
     
     // Technology/AI
     'AI', 'API', 'Internet', 'Web', 'Cloud',
