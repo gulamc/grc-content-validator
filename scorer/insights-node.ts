@@ -709,6 +709,11 @@ function validateLawsRegulations(text: string): DimensionResult {
     
     // Privacy & Compliance (KEEP THESE - they're well-known)
     'GDPR', 'CCPA', 'HIPAA', 'DPA', 'COPPA', 'NDA', 'CSR',
+    'DPIA', 'DPIAS', 'PDPIA', 'DPO', 'DPOA',  // Data Protection Impact Assessment, Data Protection Officer
+    'CPRA', 'PIPEDA', 'LGPD',  // Additional privacy laws
+    
+    // EU/Tech Regulations
+    'DSA', 'DMA', 'NIS2', 'DORA', 'AIA',  // Digital Services Act, Digital Markets Act, AI Act, etc.
     
     // Technology & Computing
     'AI', 'IoT', 'IP', 'IT', 'GRC', 'CSS', 'FTP', 'HTTP', 'HTTPS',
@@ -3027,6 +3032,122 @@ async function validateStandardStructure(text: string): Promise<DimensionResult>
   const issues: string[] = [];
   const details: Record<string, any> = {};
   
+  // ========== HELPER FUNCTIONS FOR HEADING CLASSIFICATION ==========
+  
+  // Check if a heading is a person name (should be excluded from sentence case checks)
+  function isPersonName(heading: string): boolean {
+    const words = heading.split(/\s+/);
+    
+    // First, check if it starts with a generic descriptor
+    // If so, it's NOT a person name
+    const genericDescriptors = [
+      'public', 'other', 'various', 'recent', 'new', 
+      'several', 'many', 'key', 'additional', 'further'
+    ];
+    
+    const firstWord = words[0]?.toLowerCase();
+    if (firstWord && genericDescriptors.includes(firstWord)) {
+      return false; // Generic pattern, not a person name
+    }
+    
+    // Pattern 1: "FirstName LastName" (2 capitalized words)
+    if (words.length === 2) {
+      return words.every(w => /^[A-Z][a-z]+$/.test(w));
+    }
+    
+    // Pattern 2: "FirstName LastName Title" (3 words, last is job title)
+    if (words.length === 3) {
+      const jobTitles = ['Partner', 'Associate', 'Counsel', 'Director', 
+                         'Manager', 'Consultant', 'Analyst', 'Attorney', 'Lawyer'];
+      const cleanThirdWord = words[2].replace(/[^a-zA-Z]/g, '');
+      return words.slice(0, 2).every(w => /^[A-Z][a-z]+$/.test(w)) &&
+             jobTitles.includes(cleanThirdWord);
+    }
+    
+    // Pattern 3: Law firm pattern "Firm Name, LLP|LLC|Ltd, Location"
+    if (heading.includes(',') && /\b(?:LLP|LLC|Ltd|PLC|PC)\b/i.test(heading)) {
+      return true;
+    }
+    
+    return false;
+  }
+  
+  // Check if heading has generic descriptor (e.g., "Other Amendments", "Public Authority")
+  function hasGenericDescriptor(heading: string): { word: string; index: number } | null {
+    const words = heading.split(/\s+/);
+    const genericDescriptors = [
+      'public', 'other', 'various', 'recent', 'new', 
+      'several', 'many', 'key', 'additional', 'further'
+    ];
+    
+    const firstWord = words[0]?.toLowerCase();
+    
+    if (firstWord && genericDescriptors.includes(firstWord) && words.length >= 2) {
+      // Return the second word (the noun that should be lowercase)
+      return { word: words[1], index: 1 };
+    }
+    
+    return null;
+  }
+  
+  // Check if heading contains an acronym pattern (regardless of whether it matches)
+  function hasAcronym(heading: string): boolean {
+    return /\([A-Z]{2,}\)/.test(heading);
+  }
+  
+  // Check if acronym expansion matches acronym letters
+  function checkAcronymExpansion(heading: string): { expansion: string; acronym: string; uncapitalized: string[] } | null {
+    const pattern = /^(.+?)\s*\(([A-Z]{2,})\)$/;
+    const match = heading.match(pattern);
+    
+    if (!match) return null;
+    
+    const expansion = match[1].trim();
+    const acronym = match[2];
+    
+    const words = expansion.split(/\s+/);
+    const articlesToIgnore = ['of', 'the', 'and', 'for', 'in', 'to', 'a', 'an', 'or'];
+    
+    const significantWords = words.filter(w => 
+      !articlesToIgnore.includes(w.toLowerCase())
+    );
+    
+    const firstLetters = significantWords
+      .map(w => w[0].toUpperCase())
+      .join('');
+    
+    if (firstLetters === acronym) {
+      // Check which words are not capitalized
+      const uncapitalized = significantWords.filter(w => 
+        w[0] !== w[0].toUpperCase()
+      );
+      
+      if (uncapitalized.length > 0) {
+        return { expansion, acronym, uncapitalized };
+      }
+    }
+    
+    return null;
+  }
+  
+  // Check if heading matches common document title patterns
+  function isDocumentTitle(heading: string): boolean {
+    const documentTitlePatterns = [
+      /\bGuidance for [A-Z]/i,
+      /\bFramework for [A-Z]/i,
+      /\bStrategy for [A-Z]/i,
+      /\b(?:Voluntary|Mandatory) .+ Standard/i,
+      /\bImplementation (?:Practices|Guidelines?)/i,
+      /\bNational .+ (?:Strategy|Framework|Plan)/i,
+      /\bCode of (?:Conduct|Practice)/i,
+      /\bGuidelines? on [A-Z]/i
+    ];
+    
+    return documentTitlePatterns.some(pattern => pattern.test(heading));
+  }
+  
+  // ========== END HELPER FUNCTIONS ==========
+  
   // Extract headings
   const lines = text.split('\n');
   const headings: string[] = [];
@@ -3054,7 +3175,8 @@ async function validateStandardStructure(text: string): Promise<DimensionResult>
         // Short lines ending with : (≤ 8 words) that don't start with body text indicators
         (trimmed.endsWith(':') && wordCount <= 8 && !isBodyTextStarter) ||
         // Multi-word headings (3+ words) - must be short (≤ 12 words) and not body text
-        (/^[A-Z][A-Za-z\s,&:'-]+$/.test(trimmed) && wordCount >= 3 && wordCount <= 12 && !isBodyTextStarter) ||
+        // Include parentheses for acronyms like "(PDPIA)"
+        (/^[A-Z][A-Za-z\s,&:'\-()]+$/.test(trimmed) && wordCount >= 3 && wordCount <= 12 && !isBodyTextStarter) ||
         // Single or double-word headings (1-2 words, including apostrophes)
         (/^[A-Z][A-Za-z\s']+$/.test(trimmed) && wordCount <= 2) ||
         // Numbered sections
@@ -3113,8 +3235,36 @@ async function validateStandardStructure(text: string): Promise<DimensionResult>
   ]);
   
   for (const heading of headings) {
+    // FIRST: Check if this is a person name - if so, skip all validation
+    if (isPersonName(heading)) {
+      continue; // Person names are always correct as-is
+    }
+    
+    // SECOND: Check if this is a document title - if so, skip sentence case validation
+    if (isDocumentTitle(heading)) {
+      continue; // Document titles keep their original capitalization
+    }
+    
+    // THIRD: Check if heading contains an acronym
+    // If it does, ONLY validate the acronym expansion, skip normal sentence case checks
+    if (hasAcronym(heading)) {
+      const acronymCheck = checkAcronymExpansion(heading);
+      if (acronymCheck) {
+        sentenceCaseIssues.push(
+          `Heading "${heading.substring(0, 60)}${heading.length > 60 ? '...' : ''}" - capitalize to match acronym ${acronymCheck.acronym}: ${acronymCheck.uncapitalized.map(w => `'${w}'`).join(', ')}`
+        );
+      }
+      // Always skip normal validation for acronym headings
+      continue;
+    }
+    
+    // FOURTH: Normal sentence case validation (for non-acronym headings)
     const words = heading.split(/\s+/);
     const errors: string[] = [];
+    
+    // Check if generic descriptor pattern (overrides properNouns)
+    const genericDesc = hasGenericDescriptor(heading);
+    const genericNounIndex = genericDesc ? genericDesc.index : -1;
     
     // First, identify law names (pattern: "X Y Z Act/Regulation/Directive")
     const lawNameWords = new Set<number>();
@@ -3164,6 +3314,17 @@ async function validateStandardStructure(text: string): Promise<DimensionResult>
       
       // Skip if part of a law name
       if (lawNameWords.has(i)) continue;
+      
+      // SPECIAL CASE: Generic descriptor - the noun after it should be lowercase
+      if (i === genericNounIndex) {
+        const cleanNoun = words[i].replace(/[^a-zA-Z]/g, '');
+        if (cleanNoun[0] && cleanNoun[0].match(/[A-Z]/) && cleanNoun.length > 1) {
+          if (!/^[A-Z]{2,}$/.test(cleanNoun)) {
+            errors.push(`'${word}' should be lowercase (generic descriptor)`);
+          }
+        }
+        continue; // Don't do properNoun check for this word
+      }
       
       // Check if it's a proper noun
       const isProperNoun = properNouns.has(cleanWord) || 
