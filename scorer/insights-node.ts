@@ -802,13 +802,18 @@ function validateLawsRegulations(text: string): DimensionResult {
     );
   }
   
-  // Pattern 2: Acronyms in parentheses with full name (with optional year)
+  // Pattern 2: EU Regulation format with acronym
+  // Matches: "Data Regulation (EU) 2018/1807 ('FFDR')" or "Directive (EU) 2019/1024 ("ODD")"
+  // EU format: Full Name (EU) YYYY/NUMBER ("ACRONYM")
+  const euRegulationPattern = /\b([A-Z][A-Za-z\s]+?)\s+\(EU\)\s+\d{4}\/\d+\s+\(["'\u201c\u2018]([A-Z]{2,})["'\u201d\u2019]\)/g;
+  
+  // Pattern 3: Acronyms in parentheses with full name (with optional year)
   // Matches: "Online Safety Act (OSA)" AND "Online Safety Act 2023 ("the OSA")"
   // Bug 1b fix: Changed [A-Z] to [A-Za-z] to allow lowercase definitions like "data protection officer (DPO)"
   const acronymPattern = /\b([A-Za-z][A-Za-z']*(?:\s+[A-Za-z][A-Za-z']*)*)\s+(?:\d{4}\s+)?\(["'\u201c\u2018]?(?:the\s+)?([A-Z]{2,})["'\u201d\u2019]?\)/g;
   
-  // Bug 1c fix: Pattern for acronyms WITH full name inside parentheses, separated by dash
-  // Matches: "(relevant digital service providers – RDSP)" or "(operators of essential services - OES)"
+  // Pattern 4: Acronyms WITH full name inside parentheses, separated by dash
+  // Bug 1c fix: Matches: "(relevant digital service providers – RDSP)" or "(operators of essential services - OES)"
   // Supports: hyphen (-), en-dash (–), em-dash (—)
   const acronymWithDashPattern = /\(([A-Za-z][A-Za-z']*(?:\s+[A-Za-z][A-Za-z']*)*)\s*[-–—]\s*([A-Z]{2,})\)/g;
   
@@ -830,6 +835,28 @@ function validateLawsRegulations(text: string): DimensionResult {
     'word', 'words', 'text', 'thing', 'things', 'item', 'items'
   ]);
   
+  // Process Pattern 2: EU Regulation format
+  for (const match of Array.from(text.matchAll(euRegulationPattern))) {
+    const fullName = match[1].trim();
+    const acronym = match[2].trim();
+    
+    if (commonAcronyms.has(acronym)) continue;
+    
+    // Apply stopword filter
+    const words = fullName.toLowerCase().split(/\s+/);
+    const allStopwords = words.every(word => stopwords.has(word));
+    if (allStopwords) continue;
+    
+    if (!acronymsFound.has(acronym)) {
+      acronymsFound.set(acronym, {
+        firstPosition: match.index || 0,
+        fullName,
+        spelledOut: true
+      });
+    }
+  }
+  
+  // Process Pattern 3: Standard acronym pattern
   for (const match of Array.from(text.matchAll(acronymPattern))) {
     const fullName = match[1].trim();
     const acronym = match[2].trim();
@@ -853,7 +880,7 @@ function validateLawsRegulations(text: string): DimensionResult {
     }
   }
   
-  // Bug 1c fix: Process acronyms with dash inside parentheses
+  // Process Pattern 4: Acronyms with dash inside parentheses
   // Example: "(relevant digital service providers – RDSP)"
   for (const match of Array.from(text.matchAll(acronymWithDashPattern))) {
     const fullName = match[1].trim();
@@ -877,14 +904,14 @@ function validateLawsRegulations(text: string): DimensionResult {
     }
   }
   
-  // Pattern 3: Bill numbers (HB 2008, SB 1234)
+  // Pattern 5: Bill numbers (HB 2008, SB 1234)
   const billPattern = /\b(HB|SB|HR|SR)\s+\d+/g;
   const billAcronyms = new Set<string>();
   for (const match of Array.from(text.matchAll(billPattern))) {
     billAcronyms.add(match[1]);
   }
   
-  // Pattern 4: Standalone acronyms (with deduplication)
+  // Pattern 6: Standalone acronyms (with deduplication)
   const standalonePattern = /\b([A-Z]{2,6})\b/g;
   const flaggedAcronyms = new Set<string>(); // DEDUPLICATION FIX
   const acronymViolations: Array<{ acronym: string; position: number; location: string }> = [];
@@ -937,8 +964,47 @@ function validateLawsRegulations(text: string): DimensionResult {
     }
   }
   
+  // Check for "Art." shorthand (should be "Article")
+  // Catch both " Art. " and "Art.N" patterns
+  const artShorthand = /\s(Art\.)(?:\s|\d)/g;
+  const artMatches = Array.from(text.matchAll(artShorthand));
+  
+  for (const match of artMatches.slice(0, 3)) {
+    const matchPos = match.index || 0;
+    
+    // Get para number only (don't use getParaLineRef - it treats the period in "Art." as sentence end)
+    const locationFull = getParaLineRef(text, matchPos);
+    const paraNumber = locationFull.match(/\[Para (\d+)\]/)?.[1] || '?';
+    
+    // Build custom context: ~5 words before + Art. + ~5 words after
+    const beforeText = text.substring(Math.max(0, matchPos - 80), matchPos);
+    const afterText = text.substring(matchPos + match[0].length, matchPos + match[0].length + 80);
+    
+    const beforeWords = beforeText.trim().split(/\s+/);
+    const last5Before = beforeWords.slice(-5).join(' ');
+    const afterWords = afterText.trim().split(/\s+/);
+    const first5After = afterWords.slice(0, 5).join(' ');
+    
+    const beforePreview = beforeWords.length > 5 ? '...' + last5Before : last5Before;
+    const afterPreview = afterWords.length > 5 ? first5After + '...' : first5After;
+    const artContext = `${beforePreview} ${match[1]}${afterPreview.startsWith(' ') ? '' : ' '}${afterPreview}`;
+    
+    issues.push(`[Para ${paraNumber}]: "${artContext.trim()}" - ${bold("Use 'Article' not 'Art.'")}`);
+  }
+  
+  // Check for wrong article reference format: "[LAW] Article X" should be "Article X of the [LAW]"
+  const wrongFormatPattern = /(GDPR|CCPA|HIPAA|AI Act|Data Act|DMA|DSA|NIS2|DORA|AIA)\s+(Art\.|Article)\s+(\d+)/gi;
+  const wrongMatches = Array.from(text.matchAll(wrongFormatPattern));
+  
+  for (const match of wrongMatches.slice(0, 3)) {
+    const location = getParaLineRef(text, match.index || 0);
+    const law = match[1];
+    const articleNum = match[3];
+    issues.push(`${location}: Use "Article ${articleNum} of the ${law}" not "${match[0]}"`);
+  }
+  
   // Calculate score
-  const totalIssues = fullCitations.length + acronymViolations.length;
+  const totalIssues = fullCitations.length + acronymViolations.length + artMatches.length + wrongMatches.length;
   let score: number;
   
   if (totalIssues === 0) {
@@ -3176,7 +3242,7 @@ async function validateStandardStructure(text: string): Promise<DimensionResult>
         (trimmed.endsWith(':') && wordCount <= 8 && !isBodyTextStarter) ||
         // Multi-word headings (3+ words) - must be short (≤ 12 words) and not body text
         // Include parentheses for acronyms like "(PDPIA)"
-        (/^[A-Z][A-Za-z\s,&:'\-()]+$/.test(trimmed) && wordCount >= 3 && wordCount <= 12 && !isBodyTextStarter) ||
+        (/^[A-Z][A-Za-z\s,&:'\-()]+$/.test(trimmed) && wordCount >= 3 && wordCount <= 25 && !isBodyTextStarter) ||
         // Single or double-word headings (1-2 words, including apostrophes)
         (/^[A-Z][A-Za-z\s']+$/.test(trimmed) && wordCount <= 2) ||
         // Numbered sections
@@ -3268,6 +3334,11 @@ async function validateStandardStructure(text: string): Promise<DimensionResult>
     
     // First, identify law names (pattern: "X Y Z Act/Regulation/Directive")
     const lawNameWords = new Set<number>();
+    const articlesAndDeterminers = ['the', 'a', 'an', 'this', 'that', 'these', 'those'];
+    // Common modifiers that precede law names but are NOT part of the official name
+    // e.g., "The Revised Data Act" → "Revised" is a modifier, "Data Act" is the law name
+    const lawModifiers = ['revised', 'new', 'updated', 'amended', 'proposed', 'draft', 'original', 'current', 'former', 'old', 'recent', 'upcoming', 'existing', 'pending'];
+    
     for (let i = 0; i < words.length; i++) {
       const cleanWord = words[i].replace(/[^a-zA-Z]/g, '');
       
@@ -3275,8 +3346,21 @@ async function validateStandardStructure(text: string): Promise<DimensionResult>
       if (['Act', 'Regulation', 'Directive', 'Law', 'Code', 'Convention'].includes(cleanWord)) {
         lawNameWords.add(i); // The Act/Regulation word itself
         // Go backwards and mark preceding capitalized words as part of the law name
+        // BUT stop at articles (the, a, an) or modifiers (revised, new, etc.)
         for (let j = i - 1; j >= 0; j--) {
           const prevClean = words[j].replace(/[^a-zA-Z]/g, '');
+          const prevLower = prevClean.toLowerCase();
+          
+          // Stop if we hit an article or determiner
+          if (articlesAndDeterminers.includes(prevLower)) {
+            break;
+          }
+          
+          // Stop if we hit a common modifier - not part of the official law name
+          if (lawModifiers.includes(prevLower)) {
+            break;
+          }
+          
           if (prevClean.length > 0 && prevClean[0].match(/[A-Z]/)) {
             lawNameWords.add(j);
           } else {
@@ -3286,14 +3370,14 @@ async function validateStandardStructure(text: string): Promise<DimensionResult>
       }
     }
     
-    // Identify sentence boundaries (after . ? ! - next word should be capitalized)
+    // Identify sentence boundaries (after . ? ! : - next word should be capitalized)
     const sentenceStarts = new Set<number>();
     sentenceStarts.add(0); // First word always starts a sentence
     
     for (let i = 0; i < words.length - 1; i++) {
       const word = words[i];
-      // If word ends with . ? ! then next word starts a sentence
-      if (/[.?!]['"]?\s*$/.test(word)) {
+      // If word ends with . ? ! or : then next word starts a sentence
+      if (/[.?!:]['"]?\s*$/.test(word)) {
         sentenceStarts.add(i + 1);
       }
     }
@@ -3345,7 +3429,10 @@ async function validateStandardStructure(text: string): Promise<DimensionResult>
     }
     
     if (errors.length > 0) {
-      sentenceCaseIssues.push(`Heading "${heading.substring(0, 60)}${heading.length > 60 ? '...' : ''}" - ${errors.join('; ')}`);
+      // General message instead of listing each word
+      sentenceCaseIssues.push(
+        `Heading "${heading.substring(0, 60)}${heading.length > 60 ? '...' : ''}" - ${bold('Use sentence case: capitalize only proper nouns, acronyms, and law names')}`
+      );
     }
   }
   
@@ -3440,10 +3527,14 @@ Respond with JSON:
     // NO SCORE DEDUCTION - conclusion is optional
   }
   
-  // Check for clear sections
-  if (headings.length < 3) {
+  // Check for clear sections (lenient to avoid false positives)
+  // Only flag if article has 0-1 headings (clearly no structure)
+  if (headings.length <= 1) {
     issues.push("Missing: Clear main sections (need at least 3 sections)");
     score -= 2;
+  } else if (headings.length === 2) {
+    issues.push("💡 Suggestion: Consider adding more sections for better structure (found 2, recommend 3+)");
+    // NO SCORE DEDUCTION - just a suggestion
   }
   
   score = Math.max(0, score);
