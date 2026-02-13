@@ -1000,7 +1000,8 @@ function validateLawsRegulations(text: string): DimensionResult {
     const location = getParaLineRef(text, match.index || 0);
     const law = match[1];
     const articleNum = match[3];
-    issues.push(`${location}: Use "Article ${articleNum} of the ${law}" not "${match[0]}"`);
+    issues.push(`${location}: ${bold(`Use "Article ${articleNum} of the ${law}" not "${match[0]}"`)}`);
+
   }
   
   // Calculate score
@@ -1215,7 +1216,7 @@ function validateOneTrust(text: string): DimensionResult {
     if (mention !== "OneTrust") {
       const location = getParaLineRef(text, match.index || 0);
       issues.push(
-        `${location}: '${mention}' - Should be 'OneTrust' (capital O and T).`
+        `${location}: '${mention}' - ${bold("Should be 'OneTrust' (capital O and T).")}`
       );
     }
   }
@@ -1308,7 +1309,7 @@ function validateTrademarks(text: string): DimensionResult {
     if (!hasFirstTM) {
       const location = getParaLineRef(text, positions[0]);
       issues.push(
-        `${location}: Missing ™ on first use of '${term}'. Should be '${term}™'.`
+        `${location}: ${bold(`Missing ™ on first use of '${term}'. Should be '${term}™'.`)}`
       );
     }
     
@@ -1317,7 +1318,7 @@ function validateTrademarks(text: string): DimensionResult {
       if (matches[i][0].includes('™')) {
         const location = getParaLineRef(text, positions[i]);
         issues.push(
-          `${location}: Remove ™ from subsequent use of '${term}' - only first use needs ™.`
+          `${location}: ${bold(`Remove ™ from subsequent use of '${term}' - only first use needs ™.`)}`
         );
       }
     }
@@ -1616,13 +1617,9 @@ function validateCommas(text: string): DimensionResult {
   const issues: string[] = [];
   const details: Record<string, any> = {};
   
-  // Rule 1: No space before comma
+  // Rule 1: No space before comma (detection only - individual instances shown via double-space check)
   const spaceBeforeCommaPattern = /\s+,/g;
   const spaceBeforeCommaMatches = Array.from(text.matchAll(spaceBeforeCommaPattern));
-  
-  if (spaceBeforeCommaMatches.length > 0) {
-    issues.push(`⚠️ Found ${spaceBeforeCommaMatches.length} space(s) before comma - ${bold('Remove space')}`);
-  }
   
   // Rule 1.5: Double/multiple spaces (NEW - addressing editor feedback)
   // CRITICAL: Only check WITHIN paragraphs, not across paragraph breaks
@@ -1750,7 +1747,7 @@ function validateCommas(text: string): DimensionResult {
   }
   
   details.space_before_comma_count = spaceBeforeCommaMatches.length;
-  details.oxford_comma_violations = issues.length - (spaceBeforeCommaMatches.length > 0 ? 1 : 0);
+  details.oxford_comma_violations = issues.length;
   
   const percentage = Math.round((score / 2) * 100);
   
@@ -1972,7 +1969,18 @@ function validateAmpersands(text: string): DimensionResult {
     
     // Skip if it looks like a company name (preceded by capital letters)
     if (!/[A-Z][A-Z&]+/.test(context)) {
-      issues.push(`⚠️ ${bold("Use 'and' instead of '&' in text")}`);
+      const locationFull = getParaLineRef(text, pos);
+      const paraNumber = locationFull.match(/\[Para (\d+)\]/)?.[1] || '?';
+      
+      // Build context: ~5 words before & + & + ~5 words after
+      const beforeText = text.substring(Math.max(0, pos - 60), pos);
+      const afterText = text.substring(pos + match[0].length, pos + match[0].length + 60);
+      const beforeWords = beforeText.trim().split(/\s+/);
+      const afterWords = afterText.trim().split(/\s+/);
+      const beforePreview = beforeWords.length > 5 ? '...' + beforeWords.slice(-5).join(' ') : beforeWords.join(' ');
+      const afterPreview = afterWords.length > 5 ? afterWords.slice(0, 5).join(' ') + '...' : afterWords.join(' ');
+      
+      issues.push(`[Para ${paraNumber}]: "${beforePreview} & ${afterPreview}" - ${bold("Use 'and' instead of '&' in text")}`);
       if (issues.length >= 3) break; // Limit to 3 examples
     }
   }
@@ -2075,17 +2083,30 @@ function validateNamesTitles(text: string): DimensionResult {
   const lowercaseMatches = Array.from(text.matchAll(lowercaseAbbrevPattern));
   
   for (const match of lowercaseMatches) {
-    const location = getParaLineRef(text, match.index || 0);
+    const matchPos = match.index || 0;
     const original = match[0];
     const title = match[1];
     const name = match[2];
+    
+    // Get para number only (don't rely on getParaLineRef - period in "dr." cuts context)
+    const locationFull = getParaLineRef(text, matchPos);
+    const paraNumber = locationFull.match(/\[Para (\d+)\]/)?.[1] || '?';
+    
+    // Build custom context: ~5 words before + match + ~5 words after
+    const beforeText = text.substring(Math.max(0, matchPos - 80), matchPos);
+    const afterText = text.substring(matchPos + original.length, matchPos + original.length + 80);
+    const beforeWords = beforeText.trim().split(/\s+/);
+    const afterWords = afterText.trim().split(/\s+/);
+    const beforePreview = beforeWords.length > 5 ? '...' + beforeWords.slice(-5).join(' ') : beforeWords.join(' ');
+    const afterPreview = afterWords.length > 5 ? afterWords.slice(0, 5).join(' ') + '...' : afterWords.join(' ');
+    const context = `${beforePreview} ${original} ${afterPreview}`.trim();
     
     // Capitalize the title
     const correctedTitle = title.charAt(0).toUpperCase() + title.slice(1);
     const corrected = `${correctedTitle}. ${name}`;
     
     issues.push(
-      `${location}: '${original}' should be '${corrected}' - Capitalize title abbreviations.`
+      `[Para ${paraNumber}]: "${context}" - ${bold(`'${original}' should be '${corrected}' - Capitalize title abbreviations and names.`)}`
     );
   }
   
@@ -2225,10 +2246,7 @@ function validateURLs(text: string): DimensionResult {
   
   for (const match of blankUrls) {
     const location = getParaLineRef(text, match.index || 0);
-    const contextStart = Math.max(0, (match.index || 0) - 20);
-    const contextEnd = Math.min(text.length, (match.index || 0) + match[0].length + 20);
-    const context = text.substring(contextStart, contextEnd);
-    issues.push(`⚠️ ${location}: Blank/incomplete URL detected - Context: '...${context}...'`);
+    issues.push(`⚠️ ${location}: ${bold('Blank/incomplete URL detected')}`);
   }
   
   // Find complete URLs
@@ -2316,6 +2334,10 @@ function validateNumbers(text: string): DimensionResult {
     // Skip ordinal indicators (1st, 2nd, 3rd)
     if (/\d(st|nd|rd|th)\b/i.test(text.substring(position, position + 5))) continue;
     
+    // Skip digits that are part of date patterns (e.g., "1 August 2024", "12 February 2025")
+    const afterDigit = text.substring(position, position + 20).toLowerCase();
+    if (/^\d?\s+(january|february|march|april|may|june|july|august|september|october|november|december)\b/i.test(afterDigit)) continue;
+    
     if (!seenDigits.has(digit)) {
       seenDigits.set(digit, position);
     }
@@ -2323,7 +2345,7 @@ function validateNumbers(text: string): DimensionResult {
   
   for (const [digit, position] of Array.from(seenDigits.entries()).sort((a, b) => a[1] - b[1])) {
     const location = getParaLineRef(text, position);
-    issues.push(`${location}: Single digit '${digit}' - Spell out numbers 0-9.`);
+    issues.push(`${location}: ${bold(`Single digit '${digit}' - Spell out numbers 0-9.`)}`);
   }
   
   const score = issues.length === 0 ? 1.5 : issues.length <= 3 ? 1 : 0.5;
@@ -2380,7 +2402,7 @@ function validateDates(text: string): DimensionResult {
     const location = getParaLineRef(text, match.index || 0);
     
     issues.push(
-      `❌ UK date format '${ukFormat}' ${location} - MUST use US format: '${usFormat}'.`
+      `❌ UK date format '${ukFormat}' ${location} - ${bold(`MUST use US format: '${usFormat}'.`)}`
     );
   }
   
@@ -2391,7 +2413,7 @@ function validateDates(text: string): DimensionResult {
   for (const match of numericDates) {
     const location = getParaLineRef(text, match.index || 0);
     issues.push(
-      `❌ Numeric date format '${match[0]}' ${location} - MUST spell out month (e.g., 'May 25, 2018' not '05/25/2018').`
+      `❌ Numeric date format '${match[0]}' ${location} - ${bold("MUST spell out month (e.g., 'May 25, 2018' not '05/25/2018').")}`
     );
   }
   
@@ -2493,7 +2515,26 @@ function validatePercentages(text: string): DimensionResult {
   const matches = Array.from(text.matchAll(spaceBeforePercent));
   
   if (matches.length > 0) {
-    issues.push(`⚠️ Found ${matches.length} space(s) before % - No space before percent sign (e.g., '50%' not '50 %')`);
+    for (const match of matches.slice(0, 3)) {
+      const pos = match.index || 0;
+      const locationFull = getParaLineRef(text, pos);
+      const paraNumber = locationFull.match(/\[Para (\d+)\]/)?.[1] || '?';
+      
+      // Walk backwards to find full number (regex only catches last digit)
+      let numStart = pos;
+      while (numStart > 0 && /\d/.test(text[numStart - 1])) numStart--;
+      const fullMatch = text.substring(numStart, pos + match[0].length); // e.g. "65 %"
+      
+      const beforeText = text.substring(Math.max(0, numStart - 80), numStart);
+      const afterText = text.substring(pos + match[0].length, pos + match[0].length + 60);
+      const beforeWords = beforeText.trim().split(/\s+/);
+      const afterWords = afterText.trim().split(/\s+/);
+      const beforePreview = beforeWords.length > 5 ? '...' + beforeWords.slice(-5).join(' ') : beforeWords.join(' ');
+      const afterPreview = afterWords.length > 5 ? afterWords.slice(0, 5).join(' ') + '...' : afterWords.join(' ');
+      const contextStr = `${beforePreview} ${fullMatch}${afterPreview.startsWith(' ') ? '' : ' '}${afterPreview}`.trim();
+      
+      issues.push(`[Para ${paraNumber}]: "${contextStr}" - ${bold("No space before percent sign (e.g., '50%' not '50 %')")}`);
+    }
   }
   
   const score = issues.length === 0 ? 1.5 : 1;
