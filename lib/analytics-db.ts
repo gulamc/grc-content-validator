@@ -213,10 +213,10 @@ export async function getInsightsMetrics(): Promise<InsightsMetrics> {
     SELECT 
       COUNT(*) AS total_runs,
       AVG(duration_ms) AS avg_duration_ms,
-      AVG(overall_score / CAST(max_score AS FLOAT) * 100) AS avg_score,
+      AVG(overall_score / CAST(vr.max_score AS FLOAT) * 100) AS avg_score,
       SUM(CASE WHEN passed = 1 THEN 1 ELSE 0 END) AS total_passed
-    FROM ValidationRuns
-    WHERE validator_type = 'insights'
+    FROM ValidationRuns vr
+    WHERE vr.validator_type = 'insights'
   `);
 
   const kpi = kpiResult.recordset[0];
@@ -226,7 +226,7 @@ export async function getInsightsMetrics(): Promise<InsightsMetrics> {
   const categoryResult = await db.request().query(`
     SELECT 
       category,
-      AVG(CASE WHEN max_score > 0 THEN (score / max_score) * 100 ELSE 100 END) AS avg_pct
+      AVG(CASE WHEN vf.max_score > 0 THEN (vf.score / vf.max_score) * 100 ELSE 100 END) AS avg_pct
     FROM ValidationFailures vf
     JOIN ValidationRuns vr ON vf.validation_run_id = vr.id
     WHERE vr.validator_type = 'insights'
@@ -265,14 +265,14 @@ export async function getInsightsMetrics(): Promise<InsightsMetrics> {
   // 4. Monthly trend (last 6 months)
   const trendResult = await db.request().query(`
     SELECT 
-      FORMAT(created_at, 'yyyy-MM') AS month_key,
-      FORMAT(created_at, 'MMM') AS month_label,
-      AVG(overall_score / CAST(max_score AS FLOAT) * 100) AS avg_score,
-      SUM(CASE WHEN passed = 1 THEN 1.0 ELSE 0.0 END) / COUNT(*) * 100 AS pass_rate
-    FROM ValidationRuns
-    WHERE validator_type = 'insights'
-      AND created_at >= DATEADD(month, -6, GETUTCDATE())
-    GROUP BY FORMAT(created_at, 'yyyy-MM'), FORMAT(created_at, 'MMM')
+      FORMAT(vr.created_at, 'yyyy-MM') AS month_key,
+      FORMAT(vr.created_at, 'MMM') AS month_label,
+      AVG(vr.overall_score / CAST(vr.max_score AS FLOAT) * 100) AS avg_score,
+      SUM(CASE WHEN vr.passed = 1 THEN 1.0 ELSE 0.0 END) / COUNT(*) * 100 AS pass_rate
+    FROM ValidationRuns vr
+    WHERE vr.validator_type = 'insights'
+      AND vr.created_at >= DATEADD(month, -6, GETUTCDATE())
+    GROUP BY FORMAT(vr.created_at, 'yyyy-MM'), FORMAT(vr.created_at, 'MMM')
     ORDER BY month_key
   `);
 
