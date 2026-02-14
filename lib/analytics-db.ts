@@ -67,6 +67,104 @@ function getDimensionCategory(dimId: number): string {
 }
 
 // ============================================================
+// Issue type classifier (parses message text → tag)
+// ============================================================
+
+function classifyIssue(message: string): string {
+  const msg = message.toLowerCase();
+  
+  // Dim 1 - Writing Goals
+  if (msg.includes('writing quality') || msg.includes('ai assessment')) return 'writing_quality';
+  if (msg.includes('exceed 40 words') || msg.includes('sentences exceed')) return 'long_sentences';
+  
+  // Dim 2 - Tone & Style
+  if (msg.includes('tone could be improved')) return 'tone_issues';
+  if (msg.includes('uk spelling') || msg.includes('us english')) return 'british_spelling';
+  
+  // Dim 3 - Voice
+  if (msg.includes('first-person singular') || msg.includes('replace "i"') || msg.includes('replace "my"')) return 'first_person';
+  if (msg.includes('second-person usage')) return 'second_person';
+  if (msg.includes('passive voice')) return 'passive_voice';
+  
+  // Dim 5 - Laws & Regulations
+  if (msg.includes("use 'article' not 'art.'") || msg.includes("not 'art.'")) return 'art_shorthand';
+  if (msg.includes('use "article') && msg.includes('of the')) return 'wrong_article_format';
+  if (msg.includes('acronym') || msg.includes('define on first use')) return 'undefined_acronym';
+  if (msg.includes('law name') || msg.includes('capitalize law')) return 'lowercase_law_name';
+  
+  // Dim 7 - OneTrust
+  if (msg.includes('onetrust') && msg.includes('capital o')) return 'onetrust_spelling';
+  if (msg.includes("pronoun 'it'") && msg.includes('onetrust')) return 'onetrust_pronoun';
+  
+  // Dim 8 - Trademarks
+  if (msg.includes('missing ™') || msg.includes('missing tm')) return 'missing_trademark';
+  if (msg.includes('remove ™')) return 'extra_trademark';
+  
+  // Dim 9 - Apostrophes
+  if (msg.includes('curly apostrophe') || msg.includes('straight apostrophe')) return 'curly_apostrophe';
+  
+  // Dim 10 - Colons
+  if (msg.includes('space before colon') || msg.includes('space(s) before colon')) return 'space_before_colon';
+  if (msg.includes('colons in headings')) return 'colon_in_heading';
+  if (msg.includes('capitalize the first word') && msg.includes('colon')) return 'lowercase_after_colon';
+  
+  // Dim 11 - Commas
+  if (msg.includes('oxford comma') || msg.includes("before 'and' in list")) return 'missing_oxford_comma';
+  if (msg.includes('multiple spaces') || msg.includes('use single space')) return 'double_spaces';
+  
+  // Dim 12 - Quotation Marks
+  if (msg.includes('curly quote') || msg.includes('straight quotes')) return 'curly_quotes';
+  
+  // Dim 13 - Ellipses
+  if (msg.includes('ellips') || msg.includes('three periods')) return 'improper_ellipsis';
+  
+  // Dim 14 - Semicolons
+  if (msg.includes('space before semicolon') || msg.includes("before ';'")) return 'space_before_semicolon';
+  
+  // Dim 15 - Ampersands
+  if (msg.includes("'and' instead of '&'") || msg.includes('ampersand')) return 'ampersand_in_text';
+  
+  // Dim 16 - Pronouns
+  if (msg.includes("pronoun") && msg.includes("'we'")) return 'onetrust_pronoun';
+  
+  // Dim 17 - Names & Titles
+  if (msg.includes('capitalize title abbreviation') || msg.includes("should be 'dr.") || msg.includes("should be 'prof.")) return 'lowercase_title';
+  
+  // Dim 18 - State Abbreviations
+  if (msg.includes('state abbreviation') || msg.includes('spell out state')) return 'state_abbreviation';
+  
+  // Dim 19 - URLs
+  if (msg.includes('blank/incomplete url') || msg.includes('url appears broken')) return 'broken_url';
+  
+  // Dim 20 - Numbers
+  if (msg.includes('spell out numbers') || msg.includes('single digit')) return 'unspelled_number';
+  
+  // Dim 22 - Dates
+  if (msg.includes('uk date format') || msg.includes('must use us format')) return 'uk_date_format';
+  if (msg.includes('numeric date format') || msg.includes('spell out month')) return 'numeric_date';
+  
+  // Dim 23 - Decimals
+  if (msg.includes('leading zero') || msg.includes("use '0.")) return 'missing_leading_zero';
+  
+  // Dim 24 - Percentages
+  if (msg.includes('space before percent') || msg.includes("not '50 %'")) return 'space_before_percent';
+  
+  // Dim 25 - Ranges
+  if (msg.includes('en-dash') || msg.includes('ranges with hyphens')) return 'hyphen_range';
+  
+  // Dim 30 - Structure
+  if (msg.includes('sentence case') || msg.includes('capitalize only proper nouns')) return 'heading_title_case';
+  if (msg.includes('missing: clear title')) return 'missing_title';
+  if (msg.includes('missing: introduction') || msg.includes('missing: clear main sections')) return 'missing_structure';
+  if (msg.includes('conclusion or summary')) return 'missing_conclusion';
+  
+  // Dim 31 - Intro Quality
+  if (msg.includes('why this topic') || msg.includes('target audience') || msg.includes('preview what readers')) return 'weak_introduction';
+  
+  return 'other';
+}
+
+// ============================================================
 // Track a validation run (fire-and-forget)
 // ============================================================
 
@@ -129,25 +227,33 @@ export async function trackValidation(
 
     const runId = runResult.recordset[0].id;
 
-    // Insert failures (only dimensions with issues)
+    // Insert failures (one row per individual issue for granular tracking)
     for (const dim of allDimensions) {
       if (dim.issues.length === 0) continue;
 
-      await db.request()
-        .input('run_id', sql.Int, runId)
-        .input('dimension_id', sql.Int, dim.dimension_id)
-        .input('dimension_name', sql.VarChar, dim.dimension_name)
-        .input('category', sql.VarChar, getDimensionCategory(dim.dimension_id))
-        .input('score', sql.Decimal(5, 2), dim.score)
-        .input('max_score', sql.Decimal(5, 2), dim.max_score)
-        .input('issues_count', sql.Int, dim.issues.length)
-        .input('issue_description', sql.NVarChar, dim.issues.join('\n'))
-        .query(`
-          INSERT INTO ValidationFailures 
-            (validation_run_id, dimension_id, dimension_name, category, score, max_score, issues_count, issue_description)
-          VALUES 
-            (@run_id, @dimension_id, @dimension_name, @category, @score, @max_score, @issues_count, @issue_description)
-        `);
+      for (const issue of dim.issues) {
+        // Skip sub-items (indented lines like "  • ..." or "  ...")
+        if (issue.startsWith('  ')) continue;
+        
+        const issueType = classifyIssue(issue);
+        
+        await db.request()
+          .input('run_id', sql.Int, runId)
+          .input('dimension_id', sql.Int, dim.dimension_id)
+          .input('dimension_name', sql.VarChar, dim.dimension_name)
+          .input('category', sql.VarChar, getDimensionCategory(dim.dimension_id))
+          .input('score', sql.Decimal(5, 2), dim.score)
+          .input('max_score', sql.Decimal(5, 2), dim.max_score)
+          .input('issues_count', sql.Int, 1)
+          .input('issue_type', sql.VarChar, issueType)
+          .input('issue_description', sql.NVarChar, issue)
+          .query(`
+            INSERT INTO ValidationFailures 
+              (validation_run_id, dimension_id, dimension_name, category, score, max_score, issues_count, issue_type, issue_description)
+            VALUES 
+              (@run_id, @dimension_id, @dimension_name, @category, @score, @max_score, @issues_count, @issue_type, @issue_description)
+          `);
+      }
     }
 
     // Update DailyMetrics
@@ -243,21 +349,65 @@ export async function getInsightsMetrics(): Promise<InsightsMetrics> {
     color: CATEGORY_COLORS[cat] || 'bg-gray-500',
   }));
 
-  // 3. Top 5 issues (most frequent dimension failures)
+  // 3. Top 5 issues (most frequent issue types)
   const issuesResult = await db.request().query(`
     SELECT TOP 5
-      dimension_name,
-      SUM(issues_count) AS total_issues
+      issue_type,
+      COUNT(*) AS total_issues
     FROM ValidationFailures vf
     JOIN ValidationRuns vr ON vf.validation_run_id = vr.id
     WHERE vr.validator_type = 'insights'
-    GROUP BY dimension_name
+      AND vf.issue_type IS NOT NULL
+      AND vf.issue_type != 'other'
+    GROUP BY issue_type
     ORDER BY total_issues DESC
   `);
 
   const totalIssues = issuesResult.recordset.reduce((sum: number, r: any) => sum + r.total_issues, 0);
+  
+  const ISSUE_LABELS: Record<string, string> = {
+    'british_spelling': 'British Spellings (Dim 2)',
+    'art_shorthand': 'Art. Shorthand (Dim 5)',
+    'wrong_article_format': 'Wrong Article Format (Dim 5)',
+    'undefined_acronym': 'Undefined Acronyms (Dim 5)',
+    'lowercase_law_name': 'Lowercase Law Names (Dim 5)',
+    'onetrust_spelling': 'OneTrust Misspelling (Dim 7)',
+    'onetrust_pronoun': 'OneTrust Pronoun (Dim 7)',
+    'missing_trademark': 'Missing Trademark ™ (Dim 8)',
+    'curly_apostrophe': 'Curly Apostrophes (Dim 9)',
+    'space_before_colon': 'Space Before Colon (Dim 10)',
+    'colon_in_heading': 'Colon in Heading (Dim 10)',
+    'lowercase_after_colon': 'Lowercase After Colon (Dim 10)',
+    'missing_oxford_comma': 'Missing Oxford Comma (Dim 11)',
+    'double_spaces': 'Double Spaces (Dim 11)',
+    'curly_quotes': 'Curly Quotation Marks (Dim 12)',
+    'improper_ellipsis': 'Improper Ellipsis (Dim 13)',
+    'space_before_semicolon': 'Space Before Semicolon (Dim 14)',
+    'ampersand_in_text': 'Ampersand in Text (Dim 15)',
+    'lowercase_title': 'Lowercase Title Abbreviation (Dim 17)',
+    'state_abbreviation': 'State Abbreviations (Dim 18)',
+    'broken_url': 'Broken/Incomplete URL (Dim 19)',
+    'unspelled_number': 'Unspelled Single Digit (Dim 20)',
+    'uk_date_format': 'UK Date Format (Dim 22)',
+    'numeric_date': 'Numeric Date Format (Dim 22)',
+    'missing_leading_zero': 'Missing Leading Zero (Dim 23)',
+    'space_before_percent': 'Space Before % (Dim 24)',
+    'hyphen_range': 'Hyphen Instead of En-Dash (Dim 25)',
+    'heading_title_case': 'Heading Title Case (Dim 30)',
+    'missing_title': 'Missing Title (Dim 30)',
+    'missing_structure': 'Missing Sections (Dim 30)',
+    'missing_conclusion': 'Missing Conclusion (Dim 30)',
+    'weak_introduction': 'Weak Introduction (Dim 31)',
+    'writing_quality': 'Writing Quality (Dim 1)',
+    'long_sentences': 'Long Sentences (Dim 1)',
+    'tone_issues': 'Tone Issues (Dim 2)',
+    'first_person': 'First Person Usage (Dim 3)',
+    'second_person': 'Second Person Usage (Dim 3)',
+    'passive_voice': 'Passive Voice (Dim 3)',
+  };
+  
   const topIssues = issuesResult.recordset.map((r: any) => ({
-    issue: r.dimension_name,
+    issue: ISSUE_LABELS[r.issue_type] || r.issue_type,
     count: r.total_issues,
     percentage: totalIssues > 0 ? Math.round((r.total_issues / totalIssues) * 100) : 0,
   }));
