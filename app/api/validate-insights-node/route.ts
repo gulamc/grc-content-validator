@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { scoreInsights } from '@/scorer/insights-node';
 import * as mammoth from 'mammoth';
+import { trackValidation } from '@/lib/analytics-db';
 
 /**
  * POST /api/validate-insights
@@ -83,6 +84,7 @@ export async function POST(request: NextRequest) {
     
     // Run validation (now async)
     console.log('[Insights Validator] Running validation...');
+    const startTime = Date.now();
     const scoreResult = await scoreInsights({
       text,
       metadata: { 
@@ -91,8 +93,13 @@ export async function POST(request: NextRequest) {
         uploaded_at: new Date().toISOString()
       }
     });
+    const durationMs = Date.now() - startTime;
     
-    console.log(`[Insights Validator] Validation complete: ${scoreResult.total_percentage}% (${scoreResult.status})`);
+    console.log(`[Insights Validator] Validation complete: ${scoreResult.total_percentage}% (${scoreResult.status}) in ${durationMs}ms`);
+
+    // Track in analytics DB (fire-and-forget — don't block response)
+    const userId = request.headers.get('x-ms-client-principal-name') ?? undefined;
+    trackValidation(scoreResult, file.name, durationMs, userId, scoreResult.word_count).catch(() => {});
     
     // Return results
     return NextResponse.json(scoreResult, {
