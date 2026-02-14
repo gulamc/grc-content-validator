@@ -72,16 +72,24 @@ function getDimensionCategory(dimId: number): string {
 
 export interface ValidationResult {
   total_score: number;
-  total_max_score: number;
+  total_max: number;
   total_percentage: number;
   status: string;
-  dimensions: Array<{
-    dimension_id: number;
-    dimension_name: string;
-    score: number;
-    max_score: number;
-    issues: string[];
-  }>;
+  categories: {
+    [key: string]: {
+      name: string;
+      score: number;
+      max_score: number;
+      percentage: number;
+      dimensions: Array<{
+        dimension_id: number;
+        dimension_name: string;
+        score: number;
+        max_score: number;
+        issues: string[];
+      }>;
+    };
+  };
 }
 
 export async function trackValidation(
@@ -93,17 +101,20 @@ export async function trackValidation(
 ): Promise<void> {
   try {
     const db = await getPool();
-    const passed = result.status === 'PASS' || result.total_percentage >= 70;
-    const dimensionsWithIssues = result.dimensions.filter(d => d.issues.length > 0).length;
+    const passed = result.status === 'pass' || result.total_percentage >= 70;
+    
+    // Flatten dimensions from categories
+    const allDimensions = Object.values(result.categories).flatMap(cat => cat.dimensions);
+    const dimensionsWithIssues = allDimensions.filter(d => d.issues.length > 0).length;
 
     // Insert ValidationRun
     const runResult = await db.request()
       .input('validator_type', sql.VarChar, 'insights')
       .input('content_id', sql.VarChar, filename)
       .input('overall_score', sql.Decimal(5, 2), result.total_score)
-      .input('max_score', sql.Int, result.total_max_score)
+      .input('max_score', sql.Int, result.total_max)
       .input('passed', sql.Bit, passed ? 1 : 0)
-      .input('dimension_count', sql.Int, result.dimensions.length)
+      .input('dimension_count', sql.Int, allDimensions.length)
       .input('dimensions_with_issues', sql.Int, dimensionsWithIssues)
       .input('duration_ms', sql.Int, durationMs)
       .input('user_id', sql.VarChar, userId || null)
@@ -119,7 +130,7 @@ export async function trackValidation(
     const runId = runResult.recordset[0].id;
 
     // Insert failures (only dimensions with issues)
-    for (const dim of result.dimensions) {
+    for (const dim of allDimensions) {
       if (dim.issues.length === 0) continue;
 
       await db.request()
