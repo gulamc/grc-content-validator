@@ -199,7 +199,7 @@ export async function trackValidation(
 ): Promise<void> {
   try {
     const db = await getPool();
-    const passed = result.status === 'pass' || result.total_percentage >= 70;
+    const passed = result.status === 'pass';
     
     // Flatten dimensions from categories
     const allDimensions = Object.values(result.categories).flatMap(cat => cat.dimensions);
@@ -264,7 +264,7 @@ export async function trackValidation(
       .input('score', sql.Decimal(5, 2), result.total_percentage)
       .input('passed', sql.Int, passed ? 1 : 0)
       .input('failed', sql.Int, passed ? 0 : 1)
-      .input('time_saved', sql.Int, 120) // 2 hours = 120 minutes per article
+      .input('time_saved', sql.Int, 60) // 1 hour = 60 minutes per article
       .query(`
         MERGE DailyMetrics AS target
         USING (SELECT @date AS date, @validator_type AS validator_type) AS source
@@ -436,7 +436,7 @@ export async function getInsightsMetrics(): Promise<InsightsMetrics> {
     articlesValidated: totalRuns,
     avgValidationTimeMs: Math.round(kpi.avg_duration_ms || 0),
     avgQualityScore: Math.round((kpi.avg_score || 0) * 10) / 10,
-    timeSavedHours: Math.round((totalRuns * 120) / 60), // 2hrs per article
+    timeSavedHours: Math.round((totalRuns * 60) / 60), // 1hr per article
     passRate: totalRuns > 0 ? Math.round((kpi.total_passed / totalRuns) * 100) : 0,
     categoryScores,
     topIssues,
@@ -545,7 +545,7 @@ export async function getReportsData(days: number = 90): Promise<ReportsData> {
     avgScore: r.avg_score,
     passRate: r.pass_rate,
     lastActive: r.last_active,
-    totalTimeSavedHours: Math.round((r.total_runs * 120) / 60), // 2hrs per article
+    totalTimeSavedHours: Math.round((r.total_runs * 60) / 60), // 1hr per article
   }));
 
   // 3. Article History — files validated multiple times (score progression)
