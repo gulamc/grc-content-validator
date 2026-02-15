@@ -2,10 +2,10 @@
 'use client';
 
 import { useState } from 'react';
-import { CheckCircle2, FileText, Upload, BarChart3, FileCode2 } from 'lucide-react';
+import { CheckCircle2, FileText, Upload, BarChart3, FileCode2, ClipboardList } from 'lucide-react';
 import UserProfile from '@/components/UserProfile';
 
-type ValidatorPage = 'analytics' | 'controls' | 'ets' | 'batch' | 'insights-node';
+type ValidatorPage = 'analytics' | 'controls' | 'ets' | 'batch' | 'insights-node' | 'reports';
 
 export default function DashboardPage() {
   const [activePage, setActivePage] = useState<ValidatorPage>('analytics');
@@ -21,6 +21,7 @@ export default function DashboardPage() {
   ];
 
   const analyticsItem = { id: 'analytics' as ValidatorPage, path: '/analytics' };
+  const reportsItem = { id: 'reports' as ValidatorPage, path: '/reports' };
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -33,7 +34,7 @@ export default function DashboardPage() {
         >
           <div className="flex items-center gap-2 mb-2">
             <BarChart3 className="w-6 h-6 text-emerald-400" />
-            <h1 className="text-xl font-bold">Regulatory Intelligence</h1>
+            <h1 className="text-xl font-bold">Global Content & Intelligence</h1>
           </div>
           <p className="text-sm text-slate-400">Content Validators</p>
         </button>
@@ -92,13 +93,44 @@ export default function DashboardPage() {
                 })}
               </div>
             </div>
+
+            {/* Analytics & Reports Section */}
+            <div>
+              <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 px-3">
+                Analytics & Reports
+              </div>
+              <div className="space-y-2">
+                <button
+                  onClick={() => setActivePage('analytics')}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                    activePage === 'analytics'
+                      ? 'bg-emerald-500 text-white shadow-lg'
+                      : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+                  }`}
+                >
+                  <BarChart3 className="w-5 h-5" />
+                  Analytics Dashboard
+                </button>
+                <button
+                  onClick={() => setActivePage('reports')}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                    activePage === 'reports'
+                      ? 'bg-emerald-500 text-white shadow-lg'
+                      : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+                  }`}
+                >
+                  <ClipboardList className="w-5 h-5" />
+                  Reports
+                </button>
+              </div>
+            </div>
           </div>
         </nav>
 
         {/* Footer */}
         <div className="p-4 border-t border-slate-700">
           <p className="text-xs text-slate-500">Version 2.0.0</p>
-          <p className="text-xs text-slate-500">© 2025 Regulatory Intelligence</p>
+          <p className="text-xs text-slate-500">© 2025 Global Content & Intelligence</p>
         </div>
       </div>
 
@@ -114,6 +146,7 @@ export default function DashboardPage() {
               {activePage === 'ets' && 'Evidence Tasks Validator'}
               {activePage === 'batch' && 'Batch Validator'}
               {activePage === 'insights-node' && 'Insights Validator'}
+              {activePage === 'reports' && 'Reports'}
             </h2>
           </div>
 
@@ -127,7 +160,9 @@ export default function DashboardPage() {
             key={activePage}
             src={
               activePage === 'analytics' 
-                ? analyticsItem.path 
+                ? analyticsItem.path
+                : activePage === 'reports'
+                ? reportsItem.path
                 : [...grcItems, ...dataGuidanceItems].find(item => item.id === activePage)?.path
             }
             className="w-full h-full border-0"

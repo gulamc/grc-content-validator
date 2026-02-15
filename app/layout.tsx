@@ -2,8 +2,12 @@ import type { Metadata } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Content Validator',
-  description: 'GRC Content Validator',
+  title: 'GCI Content Validator',
+  description: 'Content Validator - Global Content & Intelligence',
+  icons: {
+    icon: '/favicon.ico',
+    apple: '/icon-192.png',
+  },
 }
 
 export default function RootLayout({

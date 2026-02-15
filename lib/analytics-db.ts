@@ -443,3 +443,165 @@ export async function getInsightsMetrics(): Promise<InsightsMetrics> {
     trendData,
   };
 }
+
+// ============================================================
+// Reports data (validation log, user summary, article history)
+// ============================================================
+
+export interface ReportsData {
+  validationLog: Array<{
+    id: number;
+    date: string;
+    user: string;
+    filename: string;
+    score: number;
+    maxScore: number;
+    percentage: number;
+    passed: boolean;
+    wordCount: number | null;
+    durationMs: number;
+    issueCount: number;
+  }>;
+  userSummary: Array<{
+    user: string;
+    totalRuns: number;
+    avgScore: number;
+    passRate: number;
+    lastActive: string;
+    totalTimeSavedHours: number;
+  }>;
+  articleHistory: Array<{
+    filename: string;
+    runs: number;
+    firstScore: number;
+    latestScore: number;
+    improvement: number;
+    firstDate: string;
+    latestDate: string;
+  }>;
+}
+
+export async function getReportsData(days: number = 90): Promise<ReportsData> {
+  const db = await getPool();
+
+  // 1. Validation Log — every run, most recent first
+  const logResult = await db.request()
+    .input('days', sql.Int, days)
+    .query(`
+      SELECT 
+        vr.id,
+        vr.created_at,
+        vr.user_id,
+        vr.content_id,
+        vr.overall_score,
+        vr.max_score,
+        CASE WHEN vr.max_score > 0 
+          THEN ROUND(vr.overall_score / CAST(vr.max_score AS FLOAT) * 100, 1) 
+          ELSE 0 END AS percentage,
+        vr.passed,
+        vr.word_count,
+        vr.duration_ms,
+        vr.dimensions_with_issues
+      FROM ValidationRuns vr
+      WHERE vr.validator_type = 'insights'
+        AND vr.created_at >= DATEADD(day, -@days, GETUTCDATE())
+      ORDER BY vr.created_at DESC
+    `);
+
+  const validationLog = logResult.recordset.map((r: any) => ({
+    id: r.id,
+    date: r.created_at,
+    user: r.user_id || 'Unknown',
+    filename: r.content_id || 'Unknown',
+    score: r.overall_score,
+    maxScore: r.max_score,
+    percentage: r.percentage,
+    passed: !!r.passed,
+    wordCount: r.word_count,
+    durationMs: r.duration_ms,
+    issueCount: r.dimensions_with_issues || 0,
+  }));
+
+  // 2. User Summary — aggregated per user
+  const userResult = await db.request()
+    .input('days', sql.Int, days)
+    .query(`
+      SELECT 
+        vr.user_id,
+        COUNT(*) AS total_runs,
+        ROUND(AVG(vr.overall_score / CAST(vr.max_score AS FLOAT) * 100), 1) AS avg_score,
+        ROUND(SUM(CASE WHEN vr.passed = 1 THEN 1.0 ELSE 0.0 END) / COUNT(*) * 100, 0) AS pass_rate,
+        MAX(vr.created_at) AS last_active
+      FROM ValidationRuns vr
+      WHERE vr.validator_type = 'insights'
+        AND vr.created_at >= DATEADD(day, -@days, GETUTCDATE())
+      GROUP BY vr.user_id
+      ORDER BY total_runs DESC
+    `);
+
+  const userSummary = userResult.recordset.map((r: any) => ({
+    user: r.user_id || 'Unknown',
+    totalRuns: r.total_runs,
+    avgScore: r.avg_score,
+    passRate: r.pass_rate,
+    lastActive: r.last_active,
+    totalTimeSavedHours: Math.round((r.total_runs * 120) / 60), // 2hrs per article
+  }));
+
+  // 3. Article History — files validated multiple times (score progression)
+  const articleResult = await db.request()
+    .input('days', sql.Int, days)
+    .query(`
+      SELECT 
+        vr.content_id,
+        COUNT(*) AS runs,
+        MIN(vr.created_at) AS first_date,
+        MAX(vr.created_at) AS latest_date
+      FROM ValidationRuns vr
+      WHERE vr.validator_type = 'insights'
+        AND vr.created_at >= DATEADD(day, -@days, GETUTCDATE())
+        AND vr.content_id IS NOT NULL
+      GROUP BY vr.content_id
+      ORDER BY runs DESC, latest_date DESC
+    `);
+
+  // Get first and latest scores for each article
+  const articleHistory: ReportsData['articleHistory'] = [];
+  
+  for (const r of articleResult.recordset) {
+    const scoresResult = await db.request()
+      .input('content_id', sql.VarChar, r.content_id)
+      .query(`
+        SELECT TOP 1 
+          ROUND(vr.overall_score / CAST(vr.max_score AS FLOAT) * 100, 1) AS pct
+        FROM ValidationRuns vr
+        WHERE vr.content_id = @content_id AND vr.validator_type = 'insights'
+        ORDER BY vr.created_at ASC
+      `);
+    
+    const latestResult = await db.request()
+      .input('content_id', sql.VarChar, r.content_id)
+      .query(`
+        SELECT TOP 1 
+          ROUND(vr.overall_score / CAST(vr.max_score AS FLOAT) * 100, 1) AS pct
+        FROM ValidationRuns vr
+        WHERE vr.content_id = @content_id AND vr.validator_type = 'insights'
+        ORDER BY vr.created_at DESC
+      `);
+
+    const firstScore = scoresResult.recordset[0]?.pct || 0;
+    const latestScore = latestResult.recordset[0]?.pct || 0;
+
+    articleHistory.push({
+      filename: r.content_id,
+      runs: r.runs,
+      firstScore,
+      latestScore,
+      improvement: Math.round((latestScore - firstScore) * 10) / 10,
+      firstDate: r.first_date,
+      latestDate: r.latest_date,
+    });
+  }
+
+  return { validationLog, userSummary, articleHistory };
+}
