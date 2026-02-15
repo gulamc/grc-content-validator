@@ -67,9 +67,8 @@ function formatDuration(ms: number): string {
 }
 
 function scoreColor(pct: number): string {
-  if (pct >= 85) return 'bg-green-100 text-green-800';
-  if (pct >= 70) return 'bg-blue-100 text-blue-800';
-  if (pct >= 50) return 'bg-yellow-100 text-yellow-800';
+  if (pct >= 90) return 'bg-green-100 text-green-800';
+  if (pct >= 80) return 'bg-yellow-100 text-yellow-800';
   return 'bg-red-100 text-red-800';
 }
 
