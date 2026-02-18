@@ -477,8 +477,6 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-    </div>
-
       {/* ========== CONTROLS VALIDATOR DETAILED ANALYTICS ========== */}
       {controlsMetrics && controlsMetrics.totalBatches > 0 && (
         <div className="mt-8 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
@@ -553,6 +551,7 @@ export default function AnalyticsPage() {
         </div>
       )}
 
+    </div>
     </div>
   );
 }
