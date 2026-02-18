@@ -103,7 +103,7 @@ const ROLE_SPECIFIC = /\b(it|security|engineering|devops|audit|privacy|hr|legal|
 const DIRECTIVE_VERBS = /^\s*(configure|install|deploy|enable|set\s*up|create|develop|implement|establish|define)\b/i;
 const PRESENT_TENSE_INDICATORS = /\b(is|are|has|have|exists?|remains?|includes?|contains?|provides?|ensures?|maintains?|supports?|performs?|conducts?)\b/i;
 const PASSIVE_VOICE_INDICATORS = /\b(is|are|be|being|been)\s+[a-z]+ed\b/i;
-const ACTION_WORDS = /\b(protection|detection|monitoring|review|assessment|management|implementation|configuration|establishment|maintenance|planning|testing|auditing|tracking|reporting|training|enforcement|validation|verification|analysis)\b/i;
+const ACTION_WORDS = /\b(protection|detection|monitoring|review|assessment|management|implementation|configuration|establishment|maintenance|planning|testing|auditing|tracking|reporting|training|enforcement|validation|verification|analysis|governance|policies|policy|compliance|classification|inventory|examination|control|controls|standards|procedures|oversight|documentation|authorization|authentication|encryption|response|recovery|remediation|mitigation|evaluation|notification|registration|integration|deployment|decommissioning|procurement|transparency|accountability|fairness|logging)\b/i;
 
 // ========== ID QUALITY CHECKS (15% weight) ==========
 
@@ -537,12 +537,22 @@ function evalDescWordCount(desc: string): ScoringCheckResult {
 
 // FIX #2: Improved acronym detection - checks both before AND after
 function evalDescStandaloneClarity(desc: string): ScoringCheckResult {
+  // Common acronyms that don't need expansion
+  const COMMON_ACRONYMS = new Set([
+    'AI', 'IT', 'HR', 'US', 'UK', 'EU', 'UN', 'CEO', 'CTO', 'CFO', 'CIO', 'CISO', 'COO',
+    'API', 'URL', 'IP', 'ID', 'PIN', 'FAQ', 'SLA', 'KPI', 'ROI', 'PDF', 'SQL', 'SSH',
+    'VPN', 'SSO', 'MFA', 'IAM', 'DLP', 'EDR', 'SIEM', 'SOC', 'NOC',
+  ]);
+
   // Find acronyms that are NOT expanded anywhere nearby (before or after)
   const acronymPattern = /\b([A-Z]{2,})\b/g;
   const acronyms = desc.match(acronymPattern) || [];
   const unexpandedAcronyms: string[] = [];
   
   for (const acronym of acronyms) {
+    // Skip common acronyms
+    if (COMMON_ACRONYMS.has(acronym)) continue;
+    
     // Check if acronym is expanded in parentheses after it: "DPO (Data Protection Officer)"
     const expandedAfter = new RegExp(`\\b${acronym}\\b\\s*\\([^)]+\\)`).test(desc);
     // Check if acronym is in parentheses after expansion: "Data Protection Officer (DPO)"

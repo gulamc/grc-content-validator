@@ -39,10 +39,8 @@ const MOCK_INSIGHTS = {
   ],
 };
 
-// Overall validator stats (mock for now — will connect when other validators are tracked)
-const MOCK_VALIDATOR_STATS = [
-  { name: 'Structure', runs: 156, passed: 142, passRate: 91, avgScore: 89.4, timeSaved: 23 },
-];
+// No mock validator stats — all rows come from live data
+const MOCK_VALIDATOR_STATS: any[] = [];
 
 // GRC metrics interface
 interface GrcMetrics {
@@ -387,6 +385,81 @@ export default function AnalyticsPage() {
         </ul>
       </div>
 
+
+      {/* ========== CONTROLS VALIDATOR DETAILED ANALYTICS ========== */}
+      {controlsMetrics && controlsMetrics.totalBatches > 0 && (
+        <div className="mt-8 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h3 className="text-xl font-semibold text-gray-800">Controls Validator Analytics</h3>
+              <p className="text-sm text-gray-600 mt-1">Batch validation metrics for GRC controls</p>
+            </div>
+            <span className="px-3 py-1 bg-blue-100 text-blue-800 text-sm font-semibold rounded-full flex items-center gap-2">
+              <span className="w-2 h-2 bg-green-500 rounded-full" />
+              Live
+            </span>
+          </div>
+
+          {/* Controls KPI cards */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-4 border border-blue-200">
+              <p className="text-sm text-blue-700 font-medium mb-1">Controls Validated</p>
+              <p className="text-3xl font-bold text-blue-900">{controlsMetrics.totalItems}</p>
+              <p className="text-xs text-blue-600 mt-1">Across {controlsMetrics.totalBatches} batch{controlsMetrics.totalBatches !== 1 ? 'es' : ''}</p>
+            </div>
+            
+            <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-4 border border-green-200">
+              <p className="text-sm text-green-700 font-medium mb-1">Avg Batch Duration</p>
+              <p className="text-3xl font-bold text-green-900">{Math.round(controlsMetrics.avgDurationMs / 1000)}s</p>
+              <p className="text-xs text-green-600 mt-1">Per batch</p>
+            </div>
+            
+            <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg p-4 border border-purple-200">
+              <p className="text-sm text-purple-700 font-medium mb-1">Avg Quality Score</p>
+              <p className="text-3xl font-bold text-purple-900">{controlsMetrics.avgScore}</p>
+              <p className="text-xs text-purple-600 mt-1">Across all batches</p>
+            </div>
+            
+            <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-lg p-4 border border-orange-200">
+              <p className="text-sm text-orange-700 font-medium mb-1">Time Saved</p>
+              <p className="text-3xl font-bold text-orange-900">{controlsMetrics.timeSavedHours}hrs</p>
+              <p className="text-xs text-orange-600 mt-1">~10 min per control</p>
+            </div>
+          </div>
+
+          {/* Controls trend chart */}
+          {controlsMetrics.trendData.length > 1 && (
+            <div>
+              <h4 className="text-md font-semibold text-gray-800 mb-3">Quality Trend</h4>
+              <ResponsiveContainer width="100%" height={250}>
+                <LineChart data={controlsMetrics.trendData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis dataKey="month" stroke="#6b7280" />
+                  <YAxis stroke="#6b7280" domain={[0, 100]} />
+                  <Tooltip 
+                    contentStyle={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px' }}
+                  />
+                  <Line 
+                    type="monotone" 
+                    dataKey="avgScore" 
+                    stroke="#3b82f6" 
+                    strokeWidth={3}
+                    name="Avg Score"
+                    dot={{ fill: '#3b82f6', r: 5 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {controlsMetrics.trendData.length <= 1 && (
+            <div className="bg-gray-50 rounded-lg p-6 text-center">
+              <p className="text-sm text-gray-500">Quality trend chart will appear after 2+ months of validation data</p>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ========== INSIGHTS VALIDATOR DETAILED ANALYTICS ========== */}
       <div className="mt-8 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
         <div className="flex items-center justify-between mb-6">
@@ -478,79 +551,6 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-      {/* ========== CONTROLS VALIDATOR DETAILED ANALYTICS ========== */}
-      {controlsMetrics && controlsMetrics.totalBatches > 0 && (
-        <div className="mt-8 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <div className="flex items-center justify-between mb-6">
-            <div>
-              <h3 className="text-xl font-semibold text-gray-800">Controls Validator Analytics</h3>
-              <p className="text-sm text-gray-600 mt-1">Batch validation metrics for GRC controls</p>
-            </div>
-            <span className="px-3 py-1 bg-blue-100 text-blue-800 text-sm font-semibold rounded-full flex items-center gap-2">
-              <span className="w-2 h-2 bg-green-500 rounded-full" />
-              Live
-            </span>
-          </div>
-
-          {/* Controls KPI cards */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-            <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-4 border border-blue-200">
-              <p className="text-sm text-blue-700 font-medium mb-1">Controls Validated</p>
-              <p className="text-3xl font-bold text-blue-900">{controlsMetrics.totalItems}</p>
-              <p className="text-xs text-blue-600 mt-1">Across {controlsMetrics.totalBatches} batch{controlsMetrics.totalBatches !== 1 ? 'es' : ''}</p>
-            </div>
-            
-            <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-4 border border-green-200">
-              <p className="text-sm text-green-700 font-medium mb-1">Avg Batch Duration</p>
-              <p className="text-3xl font-bold text-green-900">{Math.round(controlsMetrics.avgDurationMs / 1000)}s</p>
-              <p className="text-xs text-green-600 mt-1">Per batch</p>
-            </div>
-            
-            <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg p-4 border border-purple-200">
-              <p className="text-sm text-purple-700 font-medium mb-1">Avg Quality Score</p>
-              <p className="text-3xl font-bold text-purple-900">{controlsMetrics.avgScore}</p>
-              <p className="text-xs text-purple-600 mt-1">Across all batches</p>
-            </div>
-            
-            <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-lg p-4 border border-orange-200">
-              <p className="text-sm text-orange-700 font-medium mb-1">Time Saved</p>
-              <p className="text-3xl font-bold text-orange-900">{controlsMetrics.timeSavedHours}hrs</p>
-              <p className="text-xs text-orange-600 mt-1">~10 min per control</p>
-            </div>
-          </div>
-
-          {/* Controls trend chart */}
-          {controlsMetrics.trendData.length > 1 && (
-            <div>
-              <h4 className="text-md font-semibold text-gray-800 mb-3">Quality Trend</h4>
-              <ResponsiveContainer width="100%" height={250}>
-                <LineChart data={controlsMetrics.trendData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis dataKey="month" stroke="#6b7280" />
-                  <YAxis stroke="#6b7280" domain={[0, 100]} />
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px' }}
-                  />
-                  <Line 
-                    type="monotone" 
-                    dataKey="avgScore" 
-                    stroke="#3b82f6" 
-                    strokeWidth={3}
-                    name="Avg Score"
-                    dot={{ fill: '#3b82f6', r: 5 }}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-
-          {controlsMetrics.trendData.length <= 1 && (
-            <div className="bg-gray-50 rounded-lg p-6 text-center">
-              <p className="text-sm text-gray-500">Quality trend chart will appear after 2+ months of validation data</p>
-            </div>
-          )}
-        </div>
-      )}
 
     </div>
   );
