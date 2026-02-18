@@ -2,7 +2,7 @@
 'use client';
 
 import React, { useState, useRef } from 'react';
-import { processExcelFile, BatchResults, ContentType, BatchItem } from '@/lib/batchProcessor';
+import { processExcelFile, BatchResults, ContentType, BatchItem, trackBatchResults } from '@/lib/batchProcessor';
 import ResultsTable from '@/components/batch/ResultsTable';
 import DetailsModal from '@/components/batch/DetailsModal';
 import { FileText, Settings, Upload } from 'lucide-react';
@@ -45,7 +45,11 @@ export default function BatchValidatorPage() {
       console.log(`Processing file as: ${contentType}`);
       
       // CRITICAL: Pass the content type explicitly
+      const startTime = Date.now();
       const batchResults = await processExcelFile(file, contentType);
+      
+      // Track to analytics DB (fire-and-forget)
+      trackBatchResults(batchResults, Date.now() - startTime).catch(() => {});
       
       setResults(batchResults);
     } catch (err: any) {

@@ -12,8 +12,9 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const days = parseInt(searchParams.get('days') || '90', 10);
+    const validatorType = searchParams.get('type') || undefined; // 'insights', 'controls', 'evidence_tasks', or undefined for all
 
-    const data = await getReportsData(days);
+    const data = await getReportsData(days, validatorType);
 
     return NextResponse.json({
       success: true,

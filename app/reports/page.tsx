@@ -20,6 +20,7 @@ interface ValidationLogEntry {
   wordCount: number | null;
   durationMs: number;
   issueCount: number;
+  validatorType: string;
 }
 
 interface UserSummaryEntry {
@@ -78,6 +79,20 @@ function userName(email: string): string {
   return name.split('.').map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
 }
 
+function typeLabel(t: string): string {
+  if (t === 'controls') return 'Control';
+  if (t === 'evidence_tasks') return 'ET';
+  if (t === 'insights') return 'Insights';
+  return t;
+}
+
+function typeBadgeColor(t: string): string {
+  if (t === 'controls') return 'bg-blue-100 text-blue-800';
+  if (t === 'evidence_tasks') return 'bg-purple-100 text-purple-800';
+  if (t === 'insights') return 'bg-teal-100 text-teal-800';
+  return 'bg-gray-100 text-gray-600';
+}
+
 // ============================================================
 // Component
 // ============================================================
@@ -87,6 +102,7 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [days, setDays] = useState(90);
+  const [validatorType, setValidatorType] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'log' | 'users' | 'articles'>('log');
   const [sortField, setSortField] = useState<string>('date');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
@@ -96,7 +112,8 @@ export default function ReportsPage() {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch(`/api/reports?days=${days}`);
+        const typeParam = validatorType ? `&type=${validatorType}` : '';
+        const res = await fetch(`/api/reports?days=${days}${typeParam}`);
         const json = await res.json();
         if (json.success) {
           setData(json.data);
@@ -110,7 +127,7 @@ export default function ReportsPage() {
       }
     }
     fetchReports();
-  }, [days]);
+  }, [days, validatorType]);
 
   // Sort validation log
   function sortedLog(): ValidationLogEntry[] {
@@ -182,9 +199,21 @@ export default function ReportsPage() {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h2 className="text-3xl font-bold text-gray-800">Validation Reports</h2>
-          <p className="text-gray-600 mt-1">Insights Validator usage and performance data</p>
+          <p className="text-gray-600 mt-1">Validator usage and performance data</p>
         </div>
         <div className="flex items-center gap-4">
+          {/* Validator type filter */}
+          <select
+            value={validatorType}
+            onChange={(e) => setValidatorType(e.target.value)}
+            className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+          >
+            <option value="">All Validators</option>
+            <option value="controls">Controls</option>
+            <option value="evidence_tasks">Evidence Tasks</option>
+            <option value="insights">Insights</option>
+          </select>
+
           {/* Time range selector */}
           <select
             value={days}
@@ -240,16 +269,16 @@ export default function ReportsPage() {
               <p className="text-xs text-gray-400 mt-1">Unique editors</p>
             </div>
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
-              <p className="text-sm text-gray-500 mb-1">Unique Articles</p>
+              <p className="text-sm text-gray-500 mb-1">Unique Items</p>
               <p className="text-2xl font-bold text-gray-900">{data.articleHistory.length}</p>
-              <p className="text-xs text-gray-400 mt-1">Files validated</p>
+              <p className="text-xs text-gray-400 mt-1">Items validated</p>
             </div>
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
               <p className="text-sm text-gray-500 mb-1">Re-validations</p>
               <p className="text-2xl font-bold text-gray-900">
                 {data.articleHistory.filter(a => a.runs > 1).length}
               </p>
-              <p className="text-xs text-gray-400 mt-1">Articles checked 2+ times</p>
+              <p className="text-xs text-gray-400 mt-1">Items validated 2+ times</p>
             </div>
           </div>
 
@@ -292,7 +321,7 @@ export default function ReportsPage() {
               }`}
             >
               <History className="w-4 h-4" />
-              Article History
+              Content History
               <span className="ml-1 px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded-full">
                 {data.articleHistory.length}
               </span>
@@ -317,6 +346,9 @@ export default function ReportsPage() {
                       <tr className="bg-gray-50 border-b border-gray-200">
                         <th onClick={() => toggleSort('date')} className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase cursor-pointer hover:text-gray-700">
                           Date <SortIcon field="date" />
+                        </th>
+                        <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase">
+                          Type
                         </th>
                         <th onClick={() => toggleSort('user')} className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase cursor-pointer hover:text-gray-700">
                           User <SortIcon field="user" />
@@ -345,6 +377,11 @@ export default function ReportsPage() {
                       {sortedLog().map((entry) => (
                         <tr key={entry.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
                           <td className="py-3 px-4 text-sm text-gray-600">{formatDateTime(entry.date)}</td>
+                          <td className="py-3 px-4">
+                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${typeBadgeColor(entry.validatorType)}`}>
+                              {typeLabel(entry.validatorType)}
+                            </span>
+                          </td>
                           <td className="py-3 px-4 text-sm text-gray-900 font-medium">{userName(entry.user)}</td>
                           <td className="py-3 px-4 text-sm text-gray-700 max-w-xs truncate" title={entry.filename}>
                             {entry.filename}
@@ -433,14 +470,14 @@ export default function ReportsPage() {
           )}
 
           {/* ============================================================ */}
-          {/* TAB 3: Article History */}
+          {/* TAB 3: Content History */}
           {/* ============================================================ */}
           {activeTab === 'articles' && (
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
               {data.articleHistory.length === 0 ? (
                 <div className="p-8 text-center text-gray-500">
                   <History className="w-12 h-12 mx-auto mb-3 text-gray-300" />
-                  <p className="text-lg font-medium">No article data yet</p>
+                  <p className="text-lg font-medium">No content data yet</p>
                   <p className="text-sm mt-1">Data will appear after validations are run</p>
                 </div>
               ) : (

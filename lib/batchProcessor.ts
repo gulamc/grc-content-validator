@@ -35,33 +35,35 @@ function normalizeControlData(data: Record<string, any>): {
   guidance: string;
 } {
   const normalized: any = {};
+  // Strip hyphens, underscores, and spaces for flexible column matching
+  const strip = (k: string) => k.toLowerCase().replace(/[-_\s]/g, '');
   
-  // Find ID field (case-insensitive)
+  // Find ID field (case-insensitive, handles CONTROL-ID, Control_ID, Control ID, etc.)
   const idKey = Object.keys(data).find(k => 
-    k.toLowerCase().replace(/_/g, '').includes('controlid') || 
-    k.toLowerCase() === 'id'
+    strip(k).includes('controlid') || 
+    strip(k) === 'id'
   );
   normalized.id = data[idKey!] || '';
   
   // Find Name field
   const nameKey = Object.keys(data).find(k => 
-    k.toLowerCase().replace(/_/g, '').includes('controlname') ||
-    k.toLowerCase() === 'name' ||
-    k.toLowerCase() === 'title'
+    strip(k).includes('controlname') ||
+    strip(k) === 'name' ||
+    strip(k) === 'title'
   );
   normalized.name = data[nameKey!] || '';
   
   // Find Description field
   const descKey = Object.keys(data).find(k => 
-    k.toLowerCase().replace(/_/g, '').includes('controldescription') ||
-    k.toLowerCase() === 'description'
+    strip(k).includes('controldescription') ||
+    strip(k) === 'description'
   );
   normalized.description = data[descKey!] || '';
   
   // Find Guidance field
   const guidanceKey = Object.keys(data).find(k => 
-    k.toLowerCase().replace(/_/g, '').includes('controlguidance') ||
-    k.toLowerCase() === 'guidance'
+    strip(k).includes('controlguidance') ||
+    strip(k) === 'guidance'
   );
   normalized.guidance = data[guidanceKey!] || '';
   
@@ -75,25 +77,31 @@ function normalizeETData(data: Record<string, any>): {
   howToCollect: string;
 } {
   const normalized: any = {};
+  // Strip hyphens, underscores, and spaces for flexible column matching
+  const strip = (k: string) => k.toLowerCase().replace(/[-_\s]/g, '');
   
-  // Find ET ID field
-  const idKey = Object.keys(data).find(k => 
-    k.toLowerCase().replace(/_/g, '').includes('etid') ||
-    k.toLowerCase() === 'id'
+  // Find ET identifier - supports ET Name (preferred), ET ID, or just ID
+  const nameKey = Object.keys(data).find(k => 
+    strip(k).includes('etname')
   );
-  normalized.etId = data[idKey!] || '';
+  const idKey = Object.keys(data).find(k => 
+    strip(k).includes('etid') ||
+    strip(k) === 'id'
+  );
+  // Prefer ET Name over ET ID as the identifier
+  normalized.etId = data[nameKey!] || data[idKey!] || '';
   
   // Find What field
   const whatKey = Object.keys(data).find(k => 
-    k.toLowerCase().replace(/_/g, '').includes('what') ||
-    k.toLowerCase().includes('outcome')
+    strip(k).includes('what') ||
+    strip(k).includes('outcome')
   );
   normalized.whatToCollect = data[whatKey!] || '';
   
   // Find How field
   const howKey = Object.keys(data).find(k => 
-    k.toLowerCase().replace(/_/g, '').includes('how') ||
-    k.toLowerCase().includes('artifact')
+    strip(k).includes('how') ||
+    strip(k).includes('artifact')
   );
   normalized.howToCollect = data[howKey!] || '';
   
@@ -274,4 +282,77 @@ export function exportToExcel(results: BatchResults): void {
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Results');
   XLSX.writeFile(workbook, `grc-validation-results-${Date.now()}.xlsx`);
+}
+
+/**
+ * Track batch validation results to analytics DB.
+ * Fire-and-forget: errors logged but never block UI.
+ */
+export async function trackBatchResults(
+  results: BatchResults,
+  durationMs: number
+): Promise<void> {
+  try {
+    const items = results.items.filter(i => i.status !== 'error' && i.scoreDetails);
+    if (items.length === 0) return;
+
+    // Calculate per-item duration (approximate)
+    const perItemMs = Math.round(durationMs / items.length);
+
+    // Build tracking payloads
+    const payloads = items.map(item => {
+      const validatorType = item.type === 'Control' ? 'controls' : 'evidence_tasks';
+      const details = item.scoreDetails as any;
+      
+      // Extract dimensions from scoreDetails
+      const dimensions: Array<{
+        key: string;
+        label: string;
+        score: number;
+        max: number;
+        checks: any[];
+      }> = [];
+
+      if (details?.dimensions) {
+        for (const [key, dim] of Object.entries(details.dimensions) as [string, any][]) {
+          dimensions.push({
+            key: dim.key || key,
+            label: dim.label || key,
+            score: dim.score || 0,
+            max: dim.max || 100,
+            checks: (dim.checks || []).map((c: any) => ({
+              id: c.id || '',
+              label: c.label || '',
+              points: c.points || 0,
+              max: c.max || 0,
+              status: c.status || 'PASS',
+              notes: c.notes,
+              violations: c.violations,
+            })),
+          });
+        }
+      }
+
+      return {
+        validatorType,
+        contentId: item.id,
+        overallScore: item.score,
+        maxScore: 100,
+        passed: item.verdict === 'PASS',
+        durationMs: perItemMs,
+        dimensions,
+      };
+    });
+
+    // POST to tracking API (fire-and-forget)
+    await fetch('/api/analytics/track', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payloads),
+    }).catch(() => {});
+
+    console.log(`[Batch Tracker] Sent ${payloads.length} items to analytics`);
+  } catch (error: any) {
+    console.error('[Batch Tracker] Failed:', error.message);
+  }
 }

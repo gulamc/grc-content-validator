@@ -60,7 +60,7 @@ function dedupe(arr?: string[]) {
 }
 
 function looksStructured(text: string): boolean {
-  return /(^|\n)\s*(?:[-*•]|\d+[.)]|[a-z][.)])\s+/m.test(text);
+  return /(^|\n)\s*(?:[-*•]|\d+[.)]|[a-z]+[.)])\s+/m.test(text);
 }
 
 function countSentences(text: string): number {
@@ -73,7 +73,8 @@ function extractSteps(text: string): string[] {
   // Method 1: Extract steps on separate lines
   const lines = text.split('\n');
   for (const line of lines) {
-    if (/^\s*(?:[-*•]|\d+[.)]|[a-z][.)])\s+(.+)/.test(line)) {
+    // Match: bullets, numbered (1.), lettered (a.), roman numerals (i), ii), iii), iv), etc.)
+    if (/^\s*(?:[-*•]|\d+[.)]|[a-z]+[.)])\s+(.+)/.test(line)) {
       steps.push(line.trim());
     }
   }
@@ -107,16 +108,15 @@ const ACTION_WORDS = /\b(protection|detection|monitoring|review|assessment|manag
 // ========== ID QUALITY CHECKS (15% weight) ==========
 
 function evalIdStructured(id: string): ScoringCheckResult {
-  // Check for valid format: FRAMEWORK [space] Number (e.g., NIST 1.1, GDPR 2.3)
+  // Check for valid formats:
+  // 1. Hyphen format: CO-001, AC-1, IA-2 (domain-number, per GRC standard)
+  // 2. Space format: NIST 1.1, GDPR 2.3
+  // 3. Dot format: GDPR.1.1
+  const hasHyphenFormat = /^[A-Z]{2,6}-\d{1,4}[A-Z]?$/.test(id);
   const hasSpaceFormat = /^[A-Z]{2,}\s+\d+(\.\d+)*$/.test(id);
-  
-  // Also accept dot format for backwards compatibility: GDPR.1.1
   const hasDotFormat = /^[A-Z]{2,}\.\d+(\.\d+)*$/.test(id) || /^\d+\.\d+(\.\d+)*$/.test(id);
   
-  // Check for invalid characters (underscore, hyphen)
-  const hasInvalidChars = /[_\-]/.test(id);
-  
-  const isValid = (hasSpaceFormat || hasDotFormat) && !hasInvalidChars;
+  const isValid = hasHyphenFormat || hasSpaceFormat || hasDotFormat;
   
   if (isValid) {
     return {
@@ -130,11 +130,8 @@ function evalIdStructured(id: string): ScoringCheckResult {
   
   // Build violation message
   const violations: string[] = [];
-  if (hasInvalidChars) {
-    violations.push("Remove underscores and hyphens");
-  }
-  if (!hasSpaceFormat && !hasDotFormat) {
-    violations.push("Use structured format (e.g., NIST 1.1 or GDPR.1.1)");
+  if (!isValid) {
+    violations.push("Use structured format (e.g., AC-1, NIST 1.1, or GDPR.1.1)");
   }
   
   return {
@@ -144,7 +141,7 @@ function evalIdStructured(id: string): ScoringCheckResult {
     max: 50,
     status: "FAIL",
     notes: violations[0],
-    violations: violations.length > 0 ? violations : ["Use structured format (e.g., NIST 1.1 or GDPR.1.1)"]
+    violations: violations.length > 0 ? violations : ["Use structured format (e.g., AC-1, NIST 1.1, or GDPR.1.1)"]
   };
 }
 

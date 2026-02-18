@@ -304,6 +304,166 @@ export async function trackValidation(
 }
 
 // ============================================================
+// Track GRC validation (Controls / Evidence Tasks)
+// ============================================================
+
+export interface GrcTrackingPayload {
+  validatorType: 'controls' | 'evidence_tasks';
+  contentId: string;          // Control ID or ET Name
+  overallScore: number;       // 0-100
+  maxScore: number;           // 100
+  passed: boolean;
+  durationMs: number;
+  userId?: string;
+  dimensions: Array<{
+    key: string;              // e.g., 'id_quality', 'what'
+    label: string;            // e.g., 'Control ID Quality', 'WHAT to Collect'
+    score: number;            // 0-100 (normalized)
+    max: number;              // 100
+    checks: Array<{
+      id: string;
+      label: string;
+      points: number;
+      max: number;
+      status: string;
+      notes?: string;
+      violations?: string[];
+    }>;
+  }>;
+}
+
+export async function trackGrcValidation(payload: GrcTrackingPayload): Promise<void> {
+  try {
+    const db = await getPool();
+
+    // Count dimensions with issues
+    const dimensionsWithIssues = payload.dimensions.filter(d =>
+      d.checks.some(c => c.status === 'FAIL' || c.status === 'WARN')
+    ).length;
+
+    const totalDimensions = payload.dimensions.length;
+
+    // Insert ValidationRun
+    const runResult = await db.request()
+      .input('validator_type', sql.VarChar, payload.validatorType)
+      .input('content_id', sql.VarChar, payload.contentId)
+      .input('overall_score', sql.Decimal(5, 2), payload.overallScore)
+      .input('max_score', sql.Int, payload.maxScore)
+      .input('passed', sql.Bit, payload.passed ? 1 : 0)
+      .input('dimension_count', sql.Int, totalDimensions)
+      .input('dimensions_with_issues', sql.Int, dimensionsWithIssues)
+      .input('duration_ms', sql.Int, payload.durationMs)
+      .input('user_id', sql.VarChar, payload.userId || null)
+      .input('word_count', sql.Int, null)
+      .query(`
+        INSERT INTO ValidationRuns 
+          (validator_type, content_id, overall_score, max_score, passed, dimension_count, dimensions_with_issues, duration_ms, user_id, word_count)
+        OUTPUT INSERTED.id
+        VALUES 
+          (@validator_type, @content_id, @overall_score, @max_score, @passed, @dimension_count, @dimensions_with_issues, @duration_ms, @user_id, @word_count)
+      `);
+
+    const runId = runResult.recordset[0].id;
+
+    // Insert failures — one row per failed/warned check
+    for (const dim of payload.dimensions) {
+      for (const check of dim.checks) {
+        if (check.status === 'PASS') continue;
+
+        const description = check.violations?.join('; ') || check.notes || check.label;
+        const issueType = classifyGrcIssue(payload.validatorType, dim.key, check.id);
+
+        await db.request()
+          .input('run_id', sql.Int, runId)
+          .input('dimension_id', sql.Int, 0)
+          .input('dimension_name', sql.VarChar, dim.label)
+          .input('category', sql.VarChar, dim.key)
+          .input('score', sql.Decimal(5, 2), check.points)
+          .input('max_score', sql.Decimal(5, 2), check.max)
+          .input('issues_count', sql.Int, 1)
+          .input('issue_type', sql.VarChar, issueType)
+          .input('issue_description', sql.NVarChar, description.substring(0, 500))
+          .query(`
+            INSERT INTO ValidationFailures 
+              (validation_run_id, dimension_id, dimension_name, category, score, max_score, issues_count, issue_type, issue_description)
+            VALUES 
+              (@run_id, @dimension_id, @dimension_name, @category, @score, @max_score, @issues_count, @issue_type, @issue_description)
+          `);
+      }
+    }
+
+    // Update DailyMetrics
+    const timeSaved = payload.validatorType === 'controls' ? 15 : 10; // minutes per item
+    const today = new Date().toISOString().split('T')[0];
+    await db.request()
+      .input('date', sql.Date, today)
+      .input('validator_type', sql.VarChar, payload.validatorType)
+      .input('score', sql.Decimal(5, 2), payload.overallScore)
+      .input('passed', sql.Int, payload.passed ? 1 : 0)
+      .input('failed', sql.Int, payload.passed ? 0 : 1)
+      .input('time_saved', sql.Int, timeSaved)
+      .query(`
+        MERGE DailyMetrics AS target
+        USING (SELECT @date AS date, @validator_type AS validator_type) AS source
+        ON target.date = source.date AND target.validator_type = source.validator_type
+        WHEN MATCHED THEN
+          UPDATE SET 
+            total_runs = total_runs + 1,
+            total_passed = total_passed + @passed,
+            total_failed = total_failed + @failed,
+            avg_score = ((avg_score * total_runs) + @score) / (total_runs + 1),
+            total_time_saved_minutes = total_time_saved_minutes + @time_saved
+        WHEN NOT MATCHED THEN
+          INSERT (date, validator_type, total_runs, total_passed, total_failed, avg_score, total_time_saved_minutes)
+          VALUES (@date, @validator_type, 1, @passed, @failed, @score, @time_saved);
+      `);
+
+    console.log(`[Analytics DB] Tracked ${payload.validatorType} run #${runId} for ${payload.contentId}`);
+  } catch (error: any) {
+    console.error('[Analytics DB] Failed to track GRC validation:', error.message);
+  }
+}
+
+// Classify GRC issues into tags for top-5 dashboard
+function classifyGrcIssue(validatorType: string, dimKey: string, checkId: string): string {
+  // Controls issue types
+  if (validatorType === 'controls') {
+    if (checkId.includes('id.')) return 'ctrl_id_format';
+    if (checkId.includes('name.concise')) return 'ctrl_name_length';
+    if (checkId.includes('name.action')) return 'ctrl_name_clarity';
+    if (checkId.includes('name.modal')) return 'ctrl_name_modal';
+    if (checkId.includes('name.role')) return 'ctrl_name_role';
+    if (checkId.includes('desc.tense')) return 'ctrl_desc_tense';
+    if (checkId.includes('desc.passive')) return 'ctrl_desc_passive';
+    if (checkId.includes('desc.modal')) return 'ctrl_desc_modal';
+    if (checkId.includes('desc.vague')) return 'ctrl_desc_vague';
+    if (checkId.includes('desc.vendor')) return 'ctrl_desc_vendor';
+    if (checkId.includes('desc.steps')) return 'ctrl_desc_has_steps';
+    if (checkId.includes('desc.word')) return 'ctrl_desc_word_count';
+    if (checkId.includes('guid.preamble')) return 'ctrl_guid_preamble';
+    if (checkId.includes('guid.steps')) return 'ctrl_guid_steps';
+    if (checkId.includes('guid.action')) return 'ctrl_guid_actionable';
+    if (checkId.includes('guid.tense') || checkId.includes('guid.active')) return 'ctrl_guid_tense';
+    if (checkId.includes('guid.tech')) return 'ctrl_guid_vendor';
+    if (checkId.includes('guid.role')) return 'ctrl_guid_role';
+    if (checkId.includes('guid.jargon')) return 'ctrl_guid_jargon';
+    return 'ctrl_other';
+  }
+  
+  // ET issue types
+  if (checkId.includes('outcome')) return 'et_what_outcome';
+  if (checkId.includes('modal')) return 'et_modal_verb';
+  if (checkId.includes('vague')) return 'et_vague_term';
+  if (checkId.includes('vendor') || checkId.includes('tech')) return 'et_vendor';
+  if (checkId.includes('role')) return 'et_role_specific';
+  if (checkId.includes('artifact')) return 'et_artifact';
+  if (checkId.includes('timeframe')) return 'et_timeframe';
+  if (checkId.includes('cohesion') || checkId.includes('semantic')) return 'et_cohesion';
+  if (checkId.includes('clarity') || checkId.includes('grammar')) return 'et_clarity';
+  return 'et_other';
+}
+
+// ============================================================
 // Query metrics for dashboard
 // ============================================================
 
@@ -496,13 +656,17 @@ export interface ReportsData {
   }>;
 }
 
-export async function getReportsData(days: number = 90): Promise<ReportsData> {
+export async function getReportsData(days: number = 90, validatorType?: string): Promise<ReportsData> {
   const db = await getPool();
 
+  // Whitelist valid validator types to prevent SQL injection
+  const validTypes = ['insights', 'controls', 'evidence_tasks'];
+  const filterType = validatorType && validTypes.includes(validatorType) ? validatorType : null;
+
   // 1. Validation Log — every run, most recent first
-  const logResult = await db.request()
-    .input('days', sql.Int, days)
-    .query(`
+  const logReq = db.request().input('days', sql.Int, days);
+  if (filterType) logReq.input('vtype', sql.VarChar, filterType);
+  const logResult = await logReq.query(`
       SELECT 
         vr.id,
         vr.created_at,
@@ -510,6 +674,7 @@ export async function getReportsData(days: number = 90): Promise<ReportsData> {
         vr.content_id,
         vr.overall_score,
         vr.max_score,
+        vr.validator_type,
         CASE WHEN vr.max_score > 0 
           THEN ROUND(vr.overall_score / CAST(vr.max_score AS FLOAT) * 100, 1) 
           ELSE 0 END AS percentage,
@@ -518,8 +683,8 @@ export async function getReportsData(days: number = 90): Promise<ReportsData> {
         vr.duration_ms,
         vr.dimensions_with_issues
       FROM ValidationRuns vr
-      WHERE vr.validator_type = 'insights'
-        AND vr.created_at >= DATEADD(day, -@days, GETUTCDATE())
+      WHERE vr.created_at >= DATEADD(day, -@days, GETUTCDATE())
+        ${filterType ? 'AND vr.validator_type = @vtype' : ''}
       ORDER BY vr.created_at DESC
     `);
 
@@ -535,12 +700,13 @@ export async function getReportsData(days: number = 90): Promise<ReportsData> {
     wordCount: r.word_count,
     durationMs: r.duration_ms,
     issueCount: r.dimensions_with_issues || 0,
+    validatorType: r.validator_type || 'insights',
   }));
 
   // 2. User Summary — aggregated per user
-  const userResult = await db.request()
-    .input('days', sql.Int, days)
-    .query(`
+  const userReq = db.request().input('days', sql.Int, days);
+  if (filterType) userReq.input('vtype', sql.VarChar, filterType);
+  const userResult = await userReq.query(`
       SELECT 
         vr.user_id,
         COUNT(*) AS total_runs,
@@ -548,11 +714,14 @@ export async function getReportsData(days: number = 90): Promise<ReportsData> {
         ROUND(SUM(CASE WHEN vr.passed = 1 THEN 1.0 ELSE 0.0 END) / COUNT(*) * 100, 0) AS pass_rate,
         MAX(vr.created_at) AS last_active
       FROM ValidationRuns vr
-      WHERE vr.validator_type = 'insights'
-        AND vr.created_at >= DATEADD(day, -@days, GETUTCDATE())
+      WHERE vr.created_at >= DATEADD(day, -@days, GETUTCDATE())
+        ${filterType ? 'AND vr.validator_type = @vtype' : ''}
       GROUP BY vr.user_id
       ORDER BY total_runs DESC
     `);
+
+  // Time saved varies by validator type
+  const timeSavedMinutes = validatorType === 'insights' ? 60 : validatorType === 'controls' ? 15 : validatorType === 'evidence_tasks' ? 10 : 30;
 
   const userSummary = userResult.recordset.map((r: any) => ({
     user: r.user_id || 'Unknown',
@@ -560,47 +729,49 @@ export async function getReportsData(days: number = 90): Promise<ReportsData> {
     avgScore: r.avg_score,
     passRate: r.pass_rate,
     lastActive: r.last_active,
-    totalTimeSavedHours: Math.round((r.total_runs * 60) / 60), // 1hr per article
+    totalTimeSavedHours: Math.round((r.total_runs * timeSavedMinutes) / 60),
   }));
 
-  // 3. Article History — files validated multiple times (score progression)
-  const articleResult = await db.request()
-    .input('days', sql.Int, days)
-    .query(`
+  // 3. Content History — items validated multiple times (score progression)
+  const articleReq = db.request().input('days', sql.Int, days);
+  if (filterType) articleReq.input('vtype', sql.VarChar, filterType);
+  const articleResult = await articleReq.query(`
       SELECT 
         vr.content_id,
         COUNT(*) AS runs,
         MIN(vr.created_at) AS first_date,
         MAX(vr.created_at) AS latest_date
       FROM ValidationRuns vr
-      WHERE vr.validator_type = 'insights'
-        AND vr.created_at >= DATEADD(day, -@days, GETUTCDATE())
+      WHERE vr.created_at >= DATEADD(day, -@days, GETUTCDATE())
+        ${filterType ? 'AND vr.validator_type = @vtype' : ''}
         AND vr.content_id IS NOT NULL
       GROUP BY vr.content_id
       ORDER BY runs DESC, latest_date DESC
     `);
 
-  // Get first and latest scores for each article
+  // Get first and latest scores for each item
   const articleHistory: ReportsData['articleHistory'] = [];
   
   for (const r of articleResult.recordset) {
-    const scoresResult = await db.request()
-      .input('content_id', sql.VarChar, r.content_id)
-      .query(`
+    const firstReq = db.request().input('content_id', sql.VarChar, r.content_id);
+    if (filterType) firstReq.input('vtype', sql.VarChar, filterType);
+    const scoresResult = await firstReq.query(`
         SELECT TOP 1 
           ROUND(vr.overall_score / CAST(vr.max_score AS FLOAT) * 100, 1) AS pct
         FROM ValidationRuns vr
-        WHERE vr.content_id = @content_id AND vr.validator_type = 'insights'
+        WHERE vr.content_id = @content_id
+          ${filterType ? 'AND vr.validator_type = @vtype' : ''}
         ORDER BY vr.created_at ASC
       `);
     
-    const latestResult = await db.request()
-      .input('content_id', sql.VarChar, r.content_id)
-      .query(`
+    const latestReq = db.request().input('content_id', sql.VarChar, r.content_id);
+    if (filterType) latestReq.input('vtype', sql.VarChar, filterType);
+    const latestResult = await latestReq.query(`
         SELECT TOP 1 
           ROUND(vr.overall_score / CAST(vr.max_score AS FLOAT) * 100, 1) AS pct
         FROM ValidationRuns vr
-        WHERE vr.content_id = @content_id AND vr.validator_type = 'insights'
+        WHERE vr.content_id = @content_id
+          ${filterType ? 'AND vr.validator_type = @vtype' : ''}
         ORDER BY vr.created_at DESC
       `);
 
