@@ -287,6 +287,7 @@ export function exportToExcel(results: BatchResults): void {
 /**
  * Track batch validation results to analytics DB.
  * Tracks ONE summary row per batch (not one per item).
+ * No pass/fail at batch level — that's per-item only.
  * Fire-and-forget: errors logged but never block UI.
  */
 export async function trackBatchResults(
@@ -300,54 +301,22 @@ export async function trackBatchResults(
 
     const validatorType = items[0].type === 'Control' ? 'controls' : 'evidence_tasks';
     const passCount = items.filter(i => i.verdict === 'PASS').length;
+    const failCount = items.length - passCount;
     const avgScore = results.summary.avgScore;
-    const allPassed = passCount === items.length;
     
-    // Use filename or generate a batch label
-    const contentId = filename || `Batch: ${items.length} ${validatorType} (${new Date().toLocaleDateString()})`;
+    const contentId = filename || `Batch: ${items.length} ${validatorType}`;
 
-    // Single summary payload
+    // Single summary payload — no pass/fail verdict at batch level
+    // Use word_count to store total items, dimensions_with_issues for fail count
     const payload = {
       validatorType,
       contentId,
       overallScore: avgScore,
       maxScore: 100,
-      passed: allPassed,
+      passed: true,  // Always true — batch itself doesn't pass/fail
       durationMs,
-      dimensions: [
-        {
-          key: 'batch_summary',
-          label: 'Batch Summary',
-          score: avgScore,
-          max: 100,
-          checks: [
-            {
-              id: 'batch.total',
-              label: `Total items: ${items.length}`,
-              points: items.length,
-              max: items.length,
-              status: 'PASS',
-            },
-            {
-              id: 'batch.passed',
-              label: `Passed: ${passCount}/${items.length}`,
-              points: passCount,
-              max: items.length,
-              status: passCount === items.length ? 'PASS' : 'WARN',
-            },
-            {
-              id: 'batch.failed',
-              label: `Failed: ${items.length - passCount}/${items.length}`,
-              points: items.length - passCount,
-              max: 0,
-              status: passCount === items.length ? 'PASS' : 'FAIL',
-              notes: passCount < items.length 
-                ? `${items.length - passCount} items failed validation` 
-                : undefined,
-            },
-          ],
-        },
-      ],
+      batchInfo: { total: items.length, passed: passCount, failed: failCount },
+      dimensions: [],  // No dimension-level failures for batch summary
     };
 
     // POST to tracking API (fire-and-forget)

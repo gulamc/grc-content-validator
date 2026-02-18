@@ -374,7 +374,9 @@ export default function ReportsPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {sortedLog().map((entry) => (
+                      {sortedLog().map((entry) => {
+                        const isBatch = entry.validatorType === 'controls' || entry.validatorType === 'evidence_tasks';
+                        return (
                         <tr key={entry.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
                           <td className="py-3 px-4 text-sm text-gray-600">{formatDateTime(entry.date)}</td>
                           <td className="py-3 px-4">
@@ -388,27 +390,32 @@ export default function ReportsPage() {
                           </td>
                           <td className="text-right py-3 px-4">
                             <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${scoreColor(entry.percentage)}`}>
-                              {entry.percentage}%
+                              {entry.percentage}%{isBatch ? ' avg' : ''}
                             </span>
                           </td>
                           <td className="text-center py-3 px-4">
-                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                              entry.passed ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                            }`}>
-                              {entry.passed ? 'PASS' : 'FAIL'}
-                            </span>
+                            {isBatch ? (
+                              <span className="text-xs text-gray-400">—</span>
+                            ) : (
+                              <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                                entry.passed ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                              }`}>
+                                {entry.passed ? 'PASS' : 'FAIL'}
+                              </span>
+                            )}
                           </td>
                           <td className="text-right py-3 px-4 text-sm text-gray-600">
-                            {entry.wordCount?.toLocaleString() || '—'}
+                            {isBatch ? '—' : (entry.wordCount?.toLocaleString() || '—')}
                           </td>
                           <td className="text-right py-3 px-4 text-sm text-gray-600">
                             {formatDuration(entry.durationMs)}
                           </td>
                           <td className="text-right py-3 px-4 text-sm text-gray-600">
-                            {entry.issueCount}
+                            {isBatch ? '—' : entry.issueCount}
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
