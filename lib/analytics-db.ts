@@ -16,9 +16,21 @@ import sql from 'mssql';
 // ============================================================
 
 let pool: sql.ConnectionPool | null = null;
+let tokenExpiresAt: number = 0;
 
 async function getPool(): Promise<sql.ConnectionPool> {
-  if (pool?.connected) return pool;
+  const now = Date.now();
+  
+  // Refresh if token expires within 5 minutes
+  if (pool?.connected && now < tokenExpiresAt - 5 * 60 * 1000) {
+    return pool;
+  }
+
+  // Close stale pool
+  if (pool) {
+    try { await pool.close(); } catch { /* ignore */ }
+    pool = null;
+  }
 
   const server = process.env.AZURE_SQL_SERVER;
   const database = process.env.AZURE_SQL_DATABASE;
@@ -31,6 +43,9 @@ async function getPool(): Promise<sql.ConnectionPool> {
   const { DefaultAzureCredential } = await import('@azure/identity');
   const credential = new DefaultAzureCredential();
   const tokenResponse = await credential.getToken('https://database.windows.net/.default');
+
+  // Track when this token expires
+  tokenExpiresAt = tokenResponse.expiresOnTimestamp;
 
   const config: sql.config = {
     server,
@@ -49,7 +64,7 @@ async function getPool(): Promise<sql.ConnectionPool> {
 
   pool = new sql.ConnectionPool(config);
   await pool.connect();
-  console.log('[Analytics DB] Connected to Azure SQL');
+  console.log('[Analytics DB] Connected to Azure SQL (token valid until ' + new Date(tokenExpiresAt).toISOString() + ')');
   return pool;
 }
 
