@@ -315,6 +315,7 @@ export interface GrcTrackingPayload {
   passed: boolean;
   durationMs: number;
   userId?: string;
+  wordCount?: number;         // For batches: item count
   dimensions: Array<{
     key: string;              // e.g., 'id_quality', 'what'
     label: string;            // e.g., 'Control ID Quality', 'WHAT to Collect'
@@ -354,7 +355,7 @@ export async function trackGrcValidation(payload: GrcTrackingPayload): Promise<v
       .input('dimensions_with_issues', sql.Int, dimensionsWithIssues)
       .input('duration_ms', sql.Int, payload.durationMs)
       .input('user_id', sql.VarChar, payload.userId || null)
-      .input('word_count', sql.Int, null)
+      .input('word_count', sql.Int, payload.wordCount || null)
       .query(`
         INSERT INTO ValidationRuns 
           (validator_type, content_id, overall_score, max_score, passed, dimension_count, dimensions_with_issues, duration_ms, user_id, word_count)
@@ -393,7 +394,7 @@ export async function trackGrcValidation(payload: GrcTrackingPayload): Promise<v
     }
 
     // Update DailyMetrics
-    const timeSaved = payload.validatorType === 'controls' ? 15 : 10; // minutes per item
+    const timeSaved = payload.validatorType === 'controls' ? 10 : 10; // minutes per item (~10 min manual review each)
     const today = new Date().toISOString().split('T')[0];
     await db.request()
       .input('date', sql.Date, today)
@@ -625,6 +626,7 @@ export async function getInsightsMetrics(): Promise<InsightsMetrics> {
 
 export interface GrcMetrics {
   totalBatches: number;
+  totalItems: number;
   avgScore: number;
   timeSavedHours: number;
   avgDurationMs: number;
@@ -634,12 +636,13 @@ export interface GrcMetrics {
 export async function getGrcMetrics(validatorType: 'controls' | 'evidence_tasks'): Promise<GrcMetrics> {
   const db = await getPool();
 
-  // KPIs
+  // KPIs — use SUM(word_count) for total items across all batches
   const kpiResult = await db.request()
     .input('vtype', sql.VarChar, validatorType)
     .query(`
       SELECT 
         COUNT(*) AS total_batches,
+        COALESCE(SUM(word_count), 0) AS total_items,
         AVG(overall_score) AS avg_score,
         AVG(duration_ms) AS avg_duration_ms
       FROM ValidationRuns
@@ -648,7 +651,9 @@ export async function getGrcMetrics(validatorType: 'controls' | 'evidence_tasks'
 
   const kpi = kpiResult.recordset[0];
   const totalBatches = kpi.total_batches || 0;
-  const timeSavedMinutes = validatorType === 'controls' ? 15 : 10;
+  const totalItems = kpi.total_items || 0;
+  // 8 hours for 50 controls = ~10 min per control; same estimate for ETs
+  const minutesPerItem = 10;
 
   // Monthly trend
   const trendResult = await db.request()
@@ -672,8 +677,9 @@ export async function getGrcMetrics(validatorType: 'controls' | 'evidence_tasks'
 
   return {
     totalBatches,
+    totalItems,
     avgScore: Math.round((kpi.avg_score || 0) * 10) / 10,
-    timeSavedHours: Math.round((totalBatches * timeSavedMinutes) / 60),
+    timeSavedHours: Math.round((totalItems * minutesPerItem) / 60),
     avgDurationMs: Math.round(kpi.avg_duration_ms || 0),
     trendData,
   };
@@ -781,7 +787,7 @@ export async function getReportsData(days: number = 90, validatorType?: string):
     `);
 
   // Time saved varies by validator type
-  const timeSavedMinutes = validatorType === 'insights' ? 60 : validatorType === 'controls' ? 15 : validatorType === 'evidence_tasks' ? 10 : 30;
+  const timeSavedMinutes = validatorType === 'insights' ? 60 : validatorType === 'controls' ? 10 : validatorType === 'evidence_tasks' ? 10 : 30;
 
   const userSummary = userResult.recordset.map((r: any) => ({
     user: r.user_id || 'Unknown',

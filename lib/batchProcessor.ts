@@ -315,7 +315,7 @@ export async function trackBatchResults(
       maxScore: 100,
       passed: true,  // Always true — batch itself doesn't pass/fail
       durationMs,
-      batchInfo: { total: items.length, passed: passCount, failed: failCount },
+      wordCount: items.length,  // Store item count in word_count column
       dimensions: [],  // No dimension-level failures for batch summary
     };
 
