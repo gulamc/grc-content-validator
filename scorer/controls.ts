@@ -421,7 +421,7 @@ function evalDescSingleObjective(desc: string): ScoringCheckResult {
 
 function evalDescNoSteps(desc: string): ScoringCheckResult {
   // Check for ANY list markers anywhere in the description (not just at line start)
-  const hasListMarkers = /(?:[-*•]|\d+[.)]|[a-z][.)])\s+[A-Z]/.test(desc);
+  const hasListMarkers = /(?:[-*•]|\d+[.)]|[a-z]+[.)])\s+[A-Z]/.test(desc);
   
   // Also check for directive/implementation language
   const hasImplementationWords = /\b(to achieve|implement|steps|following|procedure|process):/i.test(desc);
@@ -697,8 +697,8 @@ function evalGuidanceActionable(guidance: string): ScoringCheckResult {
   // If we have structured steps, check if they start with action verbs
   if (steps.length >= 2) {
     const actionableSteps = steps.filter(step => {
-      // Remove list markers
-      const stepText = step.replace(/^\s*(?:[-*•]|\d+[.)]|[a-z][.)])\s*/, '').trim();
+      // Remove list markers (including multi-char roman numerals like ii), iii), iv))
+      const stepText = step.replace(/^\s*(?:[-*•]|\d+[.)]|[a-z]+[.)])\s*/, '').trim();
       const firstWord = stepText.split(/\s+/)[0];
       
       // Heuristic: Actionable if first word is:
