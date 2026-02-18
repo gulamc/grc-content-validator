@@ -108,15 +108,8 @@ const ACTION_WORDS = /\b(protection|detection|monitoring|review|assessment|manag
 // ========== ID QUALITY CHECKS (15% weight) ==========
 
 function evalIdStructured(id: string): ScoringCheckResult {
-  // Check for valid formats:
-  // 1. Hyphen format: CO-001, AC-1, IA-2 (domain-number, per GRC standard)
-  // 2. Space format: NIST 1.1, GDPR 2.3
-  // 3. Dot format: GDPR.1.1
-  const hasHyphenFormat = /^[A-Z]{2,6}-\d{1,4}[A-Z]?$/.test(id);
-  const hasSpaceFormat = /^[A-Z]{2,}\s+\d+(\.\d+)*$/.test(id);
-  const hasDotFormat = /^[A-Z]{2,}\.\d+(\.\d+)*$/.test(id) || /^\d+\.\d+(\.\d+)*$/.test(id);
-  
-  const isValid = hasHyphenFormat || hasSpaceFormat || hasDotFormat;
+  // Valid format: PREFIX SPACE NUMBER (e.g., CAIA 1.1, NIST 1.2.3, GDPR 2.3)
+  const isValid = /^[A-Z]{2,}\s+\d+(\.\d+)*$/.test(id);
   
   if (isValid) {
     return {
@@ -128,20 +121,14 @@ function evalIdStructured(id: string): ScoringCheckResult {
     };
   }
   
-  // Build violation message
-  const violations: string[] = [];
-  if (!isValid) {
-    violations.push("Use structured format (e.g., AC-1, NIST 1.1, or GDPR.1.1)");
-  }
-  
   return {
     id: "id.structured",
     label: "Proper ID format",
     points: 0,
     max: 50,
     status: "FAIL",
-    notes: violations[0],
-    violations: violations.length > 0 ? violations : ["Use structured format (e.g., AC-1, NIST 1.1, or GDPR.1.1)"]
+    notes: "Use structured format (e.g., CAIA 1.1, NIST 1.1, ISO 5.1)",
+    violations: ["Use structured format (e.g., CAIA 1.1, NIST 1.1, ISO 5.1)"]
   };
 }
 

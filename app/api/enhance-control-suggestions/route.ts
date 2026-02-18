@@ -96,18 +96,18 @@ Why:
 FIELD-SPECIFIC RULES:
 
 1. **Control ID Issues:**
-   - Use structured format: Framework [space] Number (e.g., NIST 1.1, GDPR 2.3, ISO 5.1)
-   - Framework must be an actual compliance framework (NIST, SOC2, PCI, ISO, GDPR, HIPAA, CCPA, etc.)
-   - Framework prefix should be uppercase acronym followed by SPACE
-   - Numbering should use dots for hierarchy (1.1, 1.2.3)
+   - Valid format: PREFIX SPACE NUMBER (e.g., CAIA 1.1, NIST 1.1, GDPR 2.3)
+   - PREFIX is an uppercase acronym, NUMBER uses dots for hierarchy (1.1, 1.2.3)
+   - CRITICAL: Preserve the user's framework prefix. If the ID is "CO-001", suggest "CO 1" — do NOT replace "CO" with "NIST" or any other framework.
+   - Only suggest a different prefix if the current one is clearly meaningless (e.g., "TEST", "TEMP", "ID")
    - Keep under 24 characters
-   - Choose framework based on control context (privacy → GDPR, financial → SOC2, federal → NIST)
-   - If unclear, suggest NIST as it's widely applicable
-   - Examples: "NIST 1.1", "GDPR 2.3", "ISO 27001 A.5.1", "SOC2 CC1.1", "PCI 8.2"
+   - Examples: "CAIA 1.1", "NIST 1.1", "GDPR 2.3", "ISO 5.1", "SOC2 1.1"
 
 2. **Control Name Issues:**
    - Keep concise (6 words ideal, 12 max)
-   - Use action-oriented language (Review, Protection, Management)
+   - Action-oriented language is preferred but not required — names like "AI Governance Policies" or "Data Quality and Risk Examination" are acceptable
+   - Only suggest name changes when there's a clear violation (modal verbs, role references, vendor names, exceeds 12 words)
+   - Do NOT suggest rewording names that are already concise and descriptive
    - Be specific about what's being controlled
    - Avoid role-specific references
    - Remove modal verbs (should, must, shall)
@@ -268,17 +268,17 @@ VIOLATIONS:
 
 1) Fix Control ID Structure
 
-The ID 'TEST-001' lacks proper framework prefix and structured numbering format required by the standard.
+The ID 'TEST-001' uses a non-standard prefix. Since this is a risk management control, a recognized framework prefix is appropriate.
 
 Ex:
 Current:
 TEST-001
 
 Suggested:
-NIST 1.1
+RISK 1.1
 
 Why:
-Structured IDs with framework prefixes (NIST 1.1, GDPR 2.3, SOC2 CC1.1) improve organization and alignment with industry standards for better audit traceability.
+Structured IDs with recognized prefixes and consistent numbering improve organization and alignment with industry standards for better audit traceability.
 
 ---
 
@@ -331,10 +331,10 @@ VIOLATIONS:
     {
       "issue_number": 1,
       "title": "Fix Control ID Structure",
-      "explanation": "The ID 'SEC-FINAL-v2.1' lacks proper framework prefix. Based on the security/access control context, NIST is the most appropriate framework.",
+      "explanation": "The ID 'SEC-FINAL-v2.1' uses a non-standard format. Based on the security/access control context, a structured ID with a meaningful prefix is needed.",
       "current": "SEC-FINAL-v2.1",
-      "suggested": "NIST 1.1",
-      "why": "Structured IDs with recognized framework prefixes improve audit traceability and alignment with industry standards."
+      "suggested": "SEC 1.1",
+      "why": "Structured IDs with recognized prefixes improve audit traceability and alignment with industry standards."
     },
     {
       "issue_number": 2,

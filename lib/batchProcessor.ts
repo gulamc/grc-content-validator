@@ -165,9 +165,9 @@ export async function processExcelFile(
             guidance: controlData.guidance
           });
           
-          // Extract overall score
+          // Extract overall score — use scorer's verdict (respects gating logic)
           const overallScore = scoreResult.total?.score || 0;
-          const verdict = overallScore >= 85 ? 'PASS' : 'FAIL';
+          const verdict = scoreResult.verdict === 'pass' ? 'PASS' : 'FAIL';
           
           result = {
             id: controlData.id,
@@ -286,72 +286,78 @@ export function exportToExcel(results: BatchResults): void {
 
 /**
  * Track batch validation results to analytics DB.
+ * Tracks ONE summary row per batch (not one per item).
  * Fire-and-forget: errors logged but never block UI.
  */
 export async function trackBatchResults(
   results: BatchResults,
-  durationMs: number
+  durationMs: number,
+  filename?: string
 ): Promise<void> {
   try {
-    const items = results.items.filter(i => i.status !== 'error' && i.scoreDetails);
+    const items = results.items.filter(i => i.status !== 'error');
     if (items.length === 0) return;
 
-    // Calculate per-item duration (approximate)
-    const perItemMs = Math.round(durationMs / items.length);
+    const validatorType = items[0].type === 'Control' ? 'controls' : 'evidence_tasks';
+    const passCount = items.filter(i => i.verdict === 'PASS').length;
+    const avgScore = results.summary.avgScore;
+    const allPassed = passCount === items.length;
+    
+    // Use filename or generate a batch label
+    const contentId = filename || `Batch: ${items.length} ${validatorType} (${new Date().toLocaleDateString()})`;
 
-    // Build tracking payloads
-    const payloads = items.map(item => {
-      const validatorType = item.type === 'Control' ? 'controls' : 'evidence_tasks';
-      const details = item.scoreDetails as any;
-      
-      // Extract dimensions from scoreDetails
-      const dimensions: Array<{
-        key: string;
-        label: string;
-        score: number;
-        max: number;
-        checks: any[];
-      }> = [];
-
-      if (details?.dimensions) {
-        for (const [key, dim] of Object.entries(details.dimensions) as [string, any][]) {
-          dimensions.push({
-            key: dim.key || key,
-            label: dim.label || key,
-            score: dim.score || 0,
-            max: dim.max || 100,
-            checks: (dim.checks || []).map((c: any) => ({
-              id: c.id || '',
-              label: c.label || '',
-              points: c.points || 0,
-              max: c.max || 0,
-              status: c.status || 'PASS',
-              notes: c.notes,
-              violations: c.violations,
-            })),
-          });
-        }
-      }
-
-      return {
-        validatorType,
-        contentId: item.id,
-        overallScore: item.score,
-        maxScore: 100,
-        passed: item.verdict === 'PASS',
-        durationMs: perItemMs,
-        dimensions,
-      };
-    });
+    // Single summary payload
+    const payload = {
+      validatorType,
+      contentId,
+      overallScore: avgScore,
+      maxScore: 100,
+      passed: allPassed,
+      durationMs,
+      dimensions: [
+        {
+          key: 'batch_summary',
+          label: 'Batch Summary',
+          score: avgScore,
+          max: 100,
+          checks: [
+            {
+              id: 'batch.total',
+              label: `Total items: ${items.length}`,
+              points: items.length,
+              max: items.length,
+              status: 'PASS',
+            },
+            {
+              id: 'batch.passed',
+              label: `Passed: ${passCount}/${items.length}`,
+              points: passCount,
+              max: items.length,
+              status: passCount === items.length ? 'PASS' : 'WARN',
+            },
+            {
+              id: 'batch.failed',
+              label: `Failed: ${items.length - passCount}/${items.length}`,
+              points: items.length - passCount,
+              max: 0,
+              status: passCount === items.length ? 'PASS' : 'FAIL',
+              notes: passCount < items.length 
+                ? `${items.length - passCount} items failed validation` 
+                : undefined,
+            },
+          ],
+        },
+      ],
+    };
 
     // POST to tracking API (fire-and-forget)
     await fetch('/api/analytics/track', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payloads),
+      body: JSON.stringify(payload),
     }).catch(() => {});
 
-    console.log(`[Batch Tracker] Sent ${payloads.length} items to analytics`);
+    console.log(`[Batch Tracker] Tracked batch: ${items.length} ${validatorType}, avg ${avgScore}, ${passCount} passed`);
   } catch (error: any) {
     console.error('[Batch Tracker] Failed:', error.message);
   }
