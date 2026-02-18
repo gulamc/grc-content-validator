@@ -620,6 +620,66 @@ export async function getInsightsMetrics(): Promise<InsightsMetrics> {
 }
 
 // ============================================================
+// Controls & ET metrics for dashboard
+// ============================================================
+
+export interface GrcMetrics {
+  totalBatches: number;
+  avgScore: number;
+  timeSavedHours: number;
+  avgDurationMs: number;
+  trendData: Array<{ month: string; avgScore: number }>;
+}
+
+export async function getGrcMetrics(validatorType: 'controls' | 'evidence_tasks'): Promise<GrcMetrics> {
+  const db = await getPool();
+
+  // KPIs
+  const kpiResult = await db.request()
+    .input('vtype', sql.VarChar, validatorType)
+    .query(`
+      SELECT 
+        COUNT(*) AS total_batches,
+        AVG(overall_score) AS avg_score,
+        AVG(duration_ms) AS avg_duration_ms
+      FROM ValidationRuns
+      WHERE validator_type = @vtype
+    `);
+
+  const kpi = kpiResult.recordset[0];
+  const totalBatches = kpi.total_batches || 0;
+  const timeSavedMinutes = validatorType === 'controls' ? 15 : 10;
+
+  // Monthly trend
+  const trendResult = await db.request()
+    .input('vtype', sql.VarChar, validatorType)
+    .query(`
+      SELECT 
+        FORMAT(created_at, 'yyyy-MM') AS month_key,
+        FORMAT(created_at, 'MMM') AS month_label,
+        AVG(overall_score) AS avg_score
+      FROM ValidationRuns
+      WHERE validator_type = @vtype
+        AND created_at >= DATEADD(month, -6, GETUTCDATE())
+      GROUP BY FORMAT(created_at, 'yyyy-MM'), FORMAT(created_at, 'MMM')
+      ORDER BY month_key
+    `);
+
+  const trendData = trendResult.recordset.map((r: any) => ({
+    month: r.month_label,
+    avgScore: Math.round((r.avg_score || 0) * 10) / 10,
+  }));
+
+  return {
+    totalBatches,
+    avgScore: Math.round((kpi.avg_score || 0) * 10) / 10,
+    timeSavedHours: Math.round((totalBatches * timeSavedMinutes) / 60),
+    avgDurationMs: Math.round(kpi.avg_duration_ms || 0),
+    trendData,
+  };
+}
+
+// ============================================================
 // Reports data (validation log, user summary, article history)
 // ============================================================
 

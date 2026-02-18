@@ -1,20 +1,26 @@
 import { NextResponse } from 'next/server';
-import { getInsightsMetrics } from '@/lib/analytics-db';
+import { getInsightsMetrics, getGrcMetrics } from '@/lib/analytics-db';
 
 /**
  * GET /api/analytics
  * 
- * Returns Insights validator metrics for the analytics dashboard.
+ * Returns all validator metrics for the analytics dashboard.
  * Falls back to empty response if DB is unavailable.
  */
 export async function GET() {
   try {
-    const metrics = await getInsightsMetrics();
+    const [insights, controls, evidenceTasks] = await Promise.all([
+      getInsightsMetrics(),
+      getGrcMetrics('controls').catch(() => null),
+      getGrcMetrics('evidence_tasks').catch(() => null),
+    ]);
 
     return NextResponse.json({
       success: true,
       source: 'live',
-      data: metrics,
+      data: insights,
+      controls,
+      evidenceTasks,
     });
   } catch (error: any) {
     console.error('[Analytics API] Failed to fetch metrics:', error.message);

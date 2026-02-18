@@ -41,11 +41,17 @@ const MOCK_INSIGHTS = {
 
 // Overall validator stats (mock for now — will connect when other validators are tracked)
 const MOCK_VALIDATOR_STATS = [
-  { name: 'Controls', runs: 847, passed: 754, passRate: 89, avgScore: 88.2, timeSaved: 127 },
-  { name: 'Evidence Tasks', runs: 623, passed: 586, passRate: 94, avgScore: 90.1, timeSaved: 89 },
   { name: 'Structure', runs: 156, passed: 142, passRate: 91, avgScore: 89.4, timeSaved: 23 },
-  { name: 'Batch Processor', runs: 45, passed: 39, passRate: 87, avgScore: 87.5, timeSaved: 18 },
 ];
+
+// GRC metrics interface
+interface GrcMetrics {
+  totalBatches: number;
+  avgScore: number;
+  timeSavedHours: number;
+  avgDurationMs: number;
+  trendData: Array<{ month: string; avgScore: number }>;
+}
 
 // ============================================================
 // Component
@@ -53,6 +59,8 @@ const MOCK_VALIDATOR_STATS = [
 
 export default function AnalyticsPage() {
   const [insights, setInsights] = useState(MOCK_INSIGHTS);
+  const [controlsMetrics, setControlsMetrics] = useState<GrcMetrics | null>(null);
+  const [etMetrics, setEtMetrics] = useState<GrcMetrics | null>(null);
   const [isLive, setIsLive] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -63,6 +71,8 @@ export default function AnalyticsPage() {
         const json = await res.json();
         if (json.success && json.source === 'live') {
           setInsights(json.data);
+          if (json.controls) setControlsMetrics(json.controls);
+          if (json.evidenceTasks) setEtMetrics(json.evidenceTasks);
           setIsLive(true);
         }
       } catch {
@@ -74,7 +84,7 @@ export default function AnalyticsPage() {
     fetchMetrics();
   }, []);
 
-  // Build combined stats: mock validators + live insights
+  // Build combined stats: live Controls/ET + live Insights + mock remainder
   const insightsRow = {
     name: 'Insights',
     runs: insights.articlesValidated,
@@ -82,8 +92,37 @@ export default function AnalyticsPage() {
     passRate: insights.passRate,
     avgScore: insights.avgQualityScore,
     timeSaved: insights.timeSavedHours,
+    live: isLive,
   };
-  const validatorStats = [...MOCK_VALIDATOR_STATS, insightsRow];
+
+  const controlsRow = controlsMetrics ? {
+    name: 'Controls',
+    runs: controlsMetrics.totalBatches,
+    passed: controlsMetrics.totalBatches, // batches don't pass/fail
+    passRate: 0,
+    avgScore: controlsMetrics.avgScore,
+    timeSaved: controlsMetrics.timeSavedHours,
+    live: true,
+    isBatch: true,
+  } : null;
+
+  const etRow = etMetrics ? {
+    name: 'Evidence Tasks',
+    runs: etMetrics.totalBatches,
+    passed: etMetrics.totalBatches,
+    passRate: 0,
+    avgScore: etMetrics.avgScore,
+    timeSaved: etMetrics.timeSavedHours,
+    live: true,
+    isBatch: true,
+  } : null;
+
+  const validatorStats = [
+    controlsRow,
+    etRow,
+    insightsRow,
+    ...MOCK_VALIDATOR_STATS.map(s => ({ ...s, live: false, isBatch: false })),
+  ].filter(Boolean) as any[];
 
   const totalRuns = validatorStats.reduce((sum, v) => sum + v.runs, 0);
   const totalPassed = validatorStats.reduce((sum, v) => sum + v.passed, 0);
@@ -142,7 +181,7 @@ export default function AnalyticsPage() {
         <div className="mb-6 bg-green-50 border border-green-200 rounded-lg p-4 flex items-center gap-3">
           <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse" />
           <p className="text-green-800 text-sm font-medium">
-            Live data — Insights Validator metrics are connected to the production database
+            Live data — Validator metrics are connected to the production database
           </p>
         </div>
       )}
@@ -277,14 +316,21 @@ export default function AnalyticsPage() {
                   <td className="py-3 px-4 text-gray-900 font-medium">
                     <span className="flex items-center gap-2">
                       {stat.name}
-                      {stat.name === 'Insights' && isLive && (
+                      {stat.live && (
                         <span className="w-2 h-2 bg-green-500 rounded-full" title="Live data" />
                       )}
                     </span>
                   </td>
-                  <td className="text-right py-3 px-4 text-gray-700">{stat.runs}</td>
-                  <td className="text-right py-3 px-4 text-gray-700">{stat.passed}</td>
+                  <td className="text-right py-3 px-4 text-gray-700">
+                    {stat.runs}{stat.isBatch ? ' batches' : ''}
+                  </td>
+                  <td className="text-right py-3 px-4 text-gray-700">
+                    {stat.isBatch ? '—' : stat.passed}
+                  </td>
                   <td className="text-right py-3 px-4">
+                    {stat.isBatch ? (
+                      <span className="text-xs text-gray-400">—</span>
+                    ) : (
                     <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
                       stat.passRate >= 95 ? 'bg-green-100 text-green-800' :
                       stat.passRate >= 90 ? 'bg-blue-100 text-blue-800' :
@@ -292,6 +338,7 @@ export default function AnalyticsPage() {
                     }`}>
                       {stat.passRate}%
                     </span>
+                    )}
                   </td>
                   <td className="text-right py-3 px-4 text-gray-700">{stat.avgScore}</td>
                   <td className="text-right py-3 px-4 text-gray-700">{stat.timeSaved}hrs</td>
@@ -374,7 +421,7 @@ export default function AnalyticsPage() {
           <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-lg p-4 border border-orange-200">
             <p className="text-sm text-orange-700 font-medium mb-1">Time Saved</p>
             <p className="text-3xl font-bold text-orange-900">{insights.timeSavedHours}hrs</p>
-            <p className="text-xs text-orange-600 mt-1">~2hrs per article</p>
+            <p className="text-xs text-orange-600 mt-1">~1hr per article</p>
           </div>
         </div>
 
@@ -429,6 +476,82 @@ export default function AnalyticsPage() {
           </p>
         </div>
       </div>
+
+    </div>
+
+      {/* ========== CONTROLS VALIDATOR DETAILED ANALYTICS ========== */}
+      {controlsMetrics && controlsMetrics.totalBatches > 0 && (
+        <div className="mt-8 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h3 className="text-xl font-semibold text-gray-800">Controls Validator Analytics</h3>
+              <p className="text-sm text-gray-600 mt-1">Batch validation metrics for GRC controls</p>
+            </div>
+            <span className="px-3 py-1 bg-blue-100 text-blue-800 text-sm font-semibold rounded-full flex items-center gap-2">
+              <span className="w-2 h-2 bg-green-500 rounded-full" />
+              Live
+            </span>
+          </div>
+
+          {/* Controls KPI cards */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-4 border border-blue-200">
+              <p className="text-sm text-blue-700 font-medium mb-1">Batches Validated</p>
+              <p className="text-3xl font-bold text-blue-900">{controlsMetrics.totalBatches}</p>
+              <p className="text-xs text-blue-600 mt-1">Total batch runs</p>
+            </div>
+            
+            <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-4 border border-green-200">
+              <p className="text-sm text-green-700 font-medium mb-1">Avg Batch Duration</p>
+              <p className="text-3xl font-bold text-green-900">{Math.round(controlsMetrics.avgDurationMs / 1000)}s</p>
+              <p className="text-xs text-green-600 mt-1">Per batch</p>
+            </div>
+            
+            <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg p-4 border border-purple-200">
+              <p className="text-sm text-purple-700 font-medium mb-1">Avg Quality Score</p>
+              <p className="text-3xl font-bold text-purple-900">{controlsMetrics.avgScore}</p>
+              <p className="text-xs text-purple-600 mt-1">Across all batches</p>
+            </div>
+            
+            <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-lg p-4 border border-orange-200">
+              <p className="text-sm text-orange-700 font-medium mb-1">Time Saved</p>
+              <p className="text-3xl font-bold text-orange-900">{controlsMetrics.timeSavedHours}hrs</p>
+              <p className="text-xs text-orange-600 mt-1">~15 min per batch</p>
+            </div>
+          </div>
+
+          {/* Controls trend chart */}
+          {controlsMetrics.trendData.length > 1 && (
+            <div>
+              <h4 className="text-md font-semibold text-gray-800 mb-3">Quality Trend</h4>
+              <ResponsiveContainer width="100%" height={250}>
+                <LineChart data={controlsMetrics.trendData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis dataKey="month" stroke="#6b7280" />
+                  <YAxis stroke="#6b7280" domain={[0, 100]} />
+                  <Tooltip 
+                    contentStyle={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px' }}
+                  />
+                  <Line 
+                    type="monotone" 
+                    dataKey="avgScore" 
+                    stroke="#3b82f6" 
+                    strokeWidth={3}
+                    name="Avg Score"
+                    dot={{ fill: '#3b82f6', r: 5 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {controlsMetrics.trendData.length <= 1 && (
+            <div className="bg-gray-50 rounded-lg p-6 text-center">
+              <p className="text-sm text-gray-500">Quality trend chart will appear after 2+ months of validation data</p>
+            </div>
+          )}
+        </div>
+      )}
 
     </div>
   );
