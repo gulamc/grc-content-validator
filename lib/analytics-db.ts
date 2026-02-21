@@ -18,15 +18,12 @@ import sql from 'mssql';
 let pool: sql.ConnectionPool | null = null;
 let tokenExpiresAt: number = 0;
 
-async function getPool(): Promise<sql.ConnectionPool> {
+export async function getPool(): Promise<sql.ConnectionPool> {
   const now = Date.now();
-  
-  // Refresh if token expires within 5 minutes
+
   if (pool?.connected && now < tokenExpiresAt - 5 * 60 * 1000) {
     return pool;
   }
-
-  // Close stale pool
   if (pool) {
     try { await pool.close(); } catch { /* ignore */ }
     pool = null;
@@ -34,37 +31,40 @@ async function getPool(): Promise<sql.ConnectionPool> {
 
   const server = process.env.AZURE_SQL_SERVER;
   const database = process.env.AZURE_SQL_DATABASE;
-
   if (!server || !database) {
     throw new Error('Missing AZURE_SQL_SERVER or AZURE_SQL_DATABASE env vars');
   }
 
-  // Use @azure/identity for Managed Identity token
-  const { DefaultAzureCredential } = await import('@azure/identity');
-  const credential = new DefaultAzureCredential();
-  const tokenResponse = await credential.getToken('https://database.windows.net/.default');
+  const sqlUser = process.env.AZURE_SQL_USER;
+  let config: sql.config;
 
-  // Track when this token expires
-  tokenExpiresAt = tokenResponse.expiresOnTimestamp;
-
-  const config: sql.config = {
-    server,
-    database,
-    options: {
-      encrypt: true,
-      trustServerCertificate: false,
-    },
-    authentication: {
-      type: 'azure-active-directory-access-token' as any,
-      options: {
-        token: tokenResponse.token,
+  if (sqlUser) {
+    config = {
+      server,
+      database,
+      user: sqlUser,
+      password: process.env.AZURE_SQL_PASSWORD,
+      options: { encrypt: true, trustServerCertificate: true },
+    };
+  } else {
+    const { DefaultAzureCredential } = await import('@azure/identity');
+    const credential = new DefaultAzureCredential();
+    const tokenResponse = await credential.getToken('https://database.windows.net/.default');
+    tokenExpiresAt = tokenResponse.expiresOnTimestamp;
+    config = {
+      server,
+      database,
+      options: { encrypt: true, trustServerCertificate: false },
+      authentication: {
+        type: 'azure-active-directory-access-token' as any,
+        options: { token: tokenResponse.token },
       },
-    },
-  };
+    };
+  }
 
   pool = new sql.ConnectionPool(config);
   await pool.connect();
-  console.log('[Analytics DB] Connected to Azure SQL (token valid until ' + new Date(tokenExpiresAt).toISOString() + ')');
+  console.log(`[Analytics DB] Connected via ${sqlUser ? 'SQL login (dev)' : 'Managed Identity (prod)'}`);
   return pool;
 }
 
