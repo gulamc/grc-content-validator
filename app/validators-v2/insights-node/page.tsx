@@ -47,6 +47,7 @@ export default function InsightsValidatorPage() {
   const [result, setResult] = useState<ValidationResult | null>(null);
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [expandedDimensions, setExpandedDimensions] = useState<Set<string>>(new Set());
+  const [useV2, setUseV2] = useState(false);
 
   // Helper function to render text with bold markers
   const renderWithBold = (text: string) => {
@@ -80,7 +81,7 @@ export default function InsightsValidatorPage() {
       const formData = new FormData();
       formData.append('file', file);
 
-      const response = await fetch('/api/validate-insights-node', {
+      const response = await fetch(useV2 ? '/api/validate-insights-v2' : '/api/validate-insights-node', {
         method: 'POST',
         body: formData,
       });
@@ -182,6 +183,20 @@ export default function InsightsValidatorPage() {
         {/* Upload Section */}
         <div className="bg-white rounded-xl shadow-lg p-8 mb-8 border border-gray-100">
           <h2 className="text-2xl font-bold text-gray-900 mb-6">Upload Document</h2>
+
+          <div className="flex items-center gap-3 mb-4">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={useV2}
+                onChange={e => setUseV2(e.target.checked)}
+                className="w-4 h-4"
+              />
+              <span className="text-sm text-gray-600">
+                Use V2 Engine (Rules Engine) {useV2 && <span className="text-blue-600 font-semibold">— ACTIVE</span>}
+              </span>
+            </label>
+          </div>
           
           <div className="space-y-4">
             <div className="border-2 border-dashed border-gray-300 rounded-xl p-12 text-center hover:border-blue-400 hover:bg-blue-50/50 transition-all duration-200">
