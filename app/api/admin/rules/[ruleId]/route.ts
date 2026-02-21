@@ -32,15 +32,14 @@ export async function PUT(
   }
 
   const pool = await getPool();
-  const request = pool.request()
-    .input('ruleId', ruleId)
-    .input('contentTypeId', contentTypeId);
 
-  // Check if row exists
-  const existing = await request.query(`
-    SELECT id FROM ContentTypeRules
-    WHERE rule_id = @ruleId AND content_type_id = @contentTypeId
-  `);
+  const existing = await pool.request()
+    .input('ruleId', ruleId)
+    .input('contentTypeId', contentTypeId)
+    .query(`
+      SELECT rule_id FROM ContentTypeRules
+      WHERE rule_id = @ruleId AND type_id = @contentTypeId
+    `);
 
   if (existing.recordset.length === 0) {
     return NextResponse.json({ error: 'ContentTypeRule not found' }, { status: 404 });
@@ -52,7 +51,7 @@ export async function PUT(
     .input('contentTypeId', contentTypeId);
 
   if (isEnabled !== undefined) {
-    updates.push('is_enabled = @isEnabled');
+    updates.push('enabled = @isEnabled');
     updateRequest.input('isEnabled', isEnabled ? 1 : 0);
   }
 
@@ -71,7 +70,7 @@ export async function PUT(
   await updateRequest.query(`
     UPDATE ContentTypeRules
     SET ${updates.join(', ')}
-    WHERE rule_id = @ruleId AND content_type_id = @contentTypeId
+    WHERE rule_id = @ruleId AND type_id = @contentTypeId
   `);
 
   return NextResponse.json({ success: true });

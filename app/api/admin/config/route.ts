@@ -21,25 +21,24 @@ export async function GET(req: NextRequest) {
   const [rulesResult, contentTypesResult, ctrResult, paramsResult] =
     await Promise.all([
       pool.request().query(`
-        SELECT id, rule_key, display_name, description, default_max_score, category
+        SELECT rule_id AS id, implementation_key AS rule_key, name AS display_name,
+               description, max_score AS default_max_score, category
         FROM Rules
-        ORDER BY category, display_name
+        ORDER BY category, name
       `),
       pool.request().query(`
-        SELECT id, content_type_key, display_name, pass_threshold
+        SELECT type_id AS id, name AS content_type_key, name AS display_name, pass_threshold
         FROM ContentTypes
-        ORDER BY display_name
+        ORDER BY name
       `),
       pool.request().query(`
-        SELECT ctr.id, ctr.rule_id, ctr.content_type_id,
-               ctr.is_enabled, ctr.max_score_override
-        FROM ContentTypeRules ctr
+        SELECT rule_id, type_id AS content_type_id, enabled AS is_enabled, max_score_override
+        FROM ContentTypeRules
       `),
       pool.request().query(`
-        SELECT rp.id, rp.rule_id, rp.content_type_id,
-               rp.param_key, rp.param_value
-        FROM RuleParameters rp
-        ORDER BY rp.rule_id, rp.param_key
+        SELECT rule_id, type_id AS content_type_id, param_key, param_value
+        FROM RuleParameters
+        ORDER BY rule_id, param_key
       `),
     ]);
 

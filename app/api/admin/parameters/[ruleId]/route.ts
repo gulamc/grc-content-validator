@@ -24,7 +24,6 @@ export async function PUT(
     return NextResponse.json({ error: 'Invalid ruleId' }, { status: 400 });
   }
 
-  // body: { contentTypeId: number | null, paramKey: string, paramValue: string }
   const body = await req.json();
   const { contentTypeId, paramKey, paramValue } = body;
 
@@ -36,32 +35,30 @@ export async function PUT(
   }
 
   const pool = await getPool();
-  const request = pool.request()
+  await pool.request()
     .input('ruleId', ruleId)
     .input('contentTypeId', contentTypeId ?? null)
     .input('paramKey', paramKey)
-    .input('paramValue', String(paramValue));
-
-  // MERGE upsert
-  await request.query(`
-    MERGE RuleParameters AS target
-    USING (SELECT @ruleId AS rule_id,
-                  @contentTypeId AS content_type_id,
-                  @paramKey AS param_key) AS source
-    ON (
-      target.rule_id = source.rule_id
-      AND target.param_key = source.param_key
-      AND (
-        (target.content_type_id IS NULL AND source.content_type_id IS NULL)
-        OR target.content_type_id = source.content_type_id
+    .input('paramValue', String(paramValue))
+    .query(`
+      MERGE RuleParameters AS target
+      USING (SELECT @ruleId AS rule_id,
+                    @contentTypeId AS type_id,
+                    @paramKey AS param_key) AS source
+      ON (
+        target.rule_id = source.rule_id
+        AND target.param_key = source.param_key
+        AND (
+          (target.type_id IS NULL AND source.type_id IS NULL)
+          OR target.type_id = source.type_id
+        )
       )
-    )
-    WHEN MATCHED THEN
-      UPDATE SET target.param_value = @paramValue
-    WHEN NOT MATCHED THEN
-      INSERT (rule_id, content_type_id, param_key, param_value)
-      VALUES (@ruleId, @contentTypeId, @paramKey, @paramValue);
-  `);
+      WHEN MATCHED THEN
+        UPDATE SET target.param_value = @paramValue
+      WHEN NOT MATCHED THEN
+        INSERT (rule_id, type_id, param_key, param_value)
+        VALUES (@ruleId, @contentTypeId, @paramKey, @paramValue);
+    `);
 
   return NextResponse.json({ success: true });
 }
