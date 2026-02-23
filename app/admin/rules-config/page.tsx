@@ -21,7 +21,6 @@ interface ContentType {
 }
 
 interface ContentTypeRule {
-  id: number;
   rule_id: number;
   content_type_id: number;
   is_enabled: boolean;
@@ -29,7 +28,6 @@ interface ContentTypeRule {
 }
 
 interface Parameter {
-  id: number;
   rule_id: number;
   content_type_id: number | null;
   param_key: string;
@@ -45,14 +43,6 @@ interface ConfigData {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function getCTR(
-  ctrMap: Map<string, ContentTypeRule>,
-  ruleId: number,
-  ctId: number
-): ContentTypeRule | undefined {
-  return ctrMap.get(`${ruleId}-${ctId}`);
-}
-
 function buildCTRMap(ctrs: ContentTypeRule[]): Map<string, ContentTypeRule> {
   const map = new Map<string, ContentTypeRule>();
   for (const ctr of ctrs) {
@@ -61,30 +51,7 @@ function buildCTRMap(ctrs: ContentTypeRule[]): Map<string, ContentTypeRule> {
   return map;
 }
 
-// ─── Components ──────────────────────────────────────────────────────────────
-
-function StatusBadge({ ok, text }: { ok: boolean; text: string }) {
-  return (
-    <span
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 4,
-        fontSize: 11,
-        fontWeight: 600,
-        letterSpacing: '0.06em',
-        textTransform: 'uppercase',
-        padding: '2px 8px',
-        borderRadius: 3,
-        background: ok ? '#14311a' : '#2d1a1a',
-        color: ok ? '#4ade80' : '#f87171',
-        border: `1px solid ${ok ? '#166534' : '#7f1d1d'}`,
-      }}
-    >
-      {text}
-    </span>
-  );
-}
+// ─── Toggle ──────────────────────────────────────────────────────────────────
 
 function Toggle({
   checked,
@@ -123,6 +90,7 @@ function Toggle({
           background: '#fff',
           transition: 'left 0.15s',
           display: 'block',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
         }}
       />
     </button>
@@ -136,24 +104,18 @@ export default function AdminRulesConfigPage() {
   const [ctrMap, setCTRMap] = useState<Map<string, ContentTypeRule>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState<string | null>(null); // key of what's saving
+  const [saving, setSaving] = useState<string | null>(null);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+  const [activeTabId, setActiveTabId] = useState<number | null>(null);
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
 
-  // New content type form
-  const [newCT, setNewCT] = useState({
-    contentTypeKey: '',
-    displayName: '',
-    passThreshold: '90',
-  });
+  // Add content type form
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newCT, setNewCT] = useState({ displayName: '', passThreshold: '90' });
   const [addingCT, setAddingCT] = useState(false);
 
-  // Param editing state: { [ruleId-paramKey]: draftValue }
+  // Param drafts
   const [paramDrafts, setParamDrafts] = useState<Record<string, string>>({});
-
-  // Grouped rules by category
-  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(
-    new Set()
-  );
 
   const showToast = useCallback((msg: string, ok: boolean) => {
     setToast({ msg, ok });
@@ -165,25 +127,25 @@ export default function AdminRulesConfigPage() {
     setError(null);
     try {
       const res = await fetch('/api/admin/config');
-      if (res.status === 403) {
-        setError('access_denied');
-        return;
-      }
+      if (res.status === 403) { setError('access_denied'); return; }
       if (!res.ok) throw new Error('Failed to load config');
       const data: ConfigData = await res.json();
       setConfig(data);
       setCTRMap(buildCTRMap(data.contentTypeRules));
 
-      // Pre-populate param drafts
       const drafts: Record<string, string> = {};
       for (const p of data.parameters) {
         drafts[`${p.rule_id}-${p.param_key}`] = p.param_value;
       }
       setParamDrafts(drafts);
 
-      // Expand all categories by default
       const cats = new Set(data.rules.map((r) => r.category));
       setExpandedCategories(cats);
+
+      // Set first tab as active if not already set
+      if (data.contentTypes.length > 0) {
+        setActiveTabId((prev) => prev ?? data.contentTypes[0].id);
+      }
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -191,22 +153,15 @@ export default function AdminRulesConfigPage() {
     }
   }, []);
 
-  useEffect(() => {
-    loadConfig();
-  }, [loadConfig]);
+  useEffect(() => { loadConfig(); }, [loadConfig]);
 
-  const handleToggle = async (
-    rule: Rule,
-    ct: ContentType,
-    currentEnabled: boolean
-  ) => {
-    const key = `toggle-${rule.id}-${ct.id}`;
-    setSaving(key);
+  const handleToggle = async (rule: Rule, ct: ContentType, currentEnabled: boolean) => {
+    const saveKey = `toggle-${rule.id}-${ct.id}`;
+    setSaving(saveKey);
+    const ctrKey = `${rule.id}-${ct.id}`;
 
-    // Optimistic update
     setCTRMap((prev) => {
       const next = new Map(prev);
-      const ctrKey = `${rule.id}-${ct.id}`;
       const existing = next.get(ctrKey);
       if (existing) next.set(ctrKey, { ...existing, is_enabled: !currentEnabled });
       return next;
@@ -216,18 +171,13 @@ export default function AdminRulesConfigPage() {
       const res = await fetch(`/api/admin/rules/${rule.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contentTypeId: ct.id,
-          isEnabled: !currentEnabled,
-        }),
+        body: JSON.stringify({ contentTypeId: ct.id, isEnabled: !currentEnabled }),
       });
       if (!res.ok) throw new Error('Save failed');
-      showToast(`${rule.display_name} ${!currentEnabled ? 'enabled' : 'disabled'} for ${ct.display_name}`, true);
+      showToast(`${rule.display_name} ${!currentEnabled ? 'enabled' : 'disabled'}`, true);
     } catch {
-      // Revert
       setCTRMap((prev) => {
         const next = new Map(prev);
-        const ctrKey = `${rule.id}-${ct.id}`;
         const existing = next.get(ctrKey);
         if (existing) next.set(ctrKey, { ...existing, is_enabled: currentEnabled });
         return next;
@@ -238,13 +188,9 @@ export default function AdminRulesConfigPage() {
     }
   };
 
-  const handleScoreChange = async (
-    rule: Rule,
-    ct: ContentType,
-    value: string
-  ) => {
-    const key = `score-${rule.id}-${ct.id}`;
-    setSaving(key);
+  const handleScoreBlur = async (rule: Rule, ct: ContentType, value: string, prevValue: string) => {
+    if (value === prevValue) return;
+    setSaving(`score-${rule.id}-${ct.id}`);
     try {
       const res = await fetch(`/api/admin/rules/${rule.id}`, {
         method: 'PUT',
@@ -255,8 +201,6 @@ export default function AdminRulesConfigPage() {
         }),
       });
       if (!res.ok) throw new Error('Save failed');
-
-      // Update map
       setCTRMap((prev) => {
         const next = new Map(prev);
         const ctrKey = `${rule.id}-${ct.id}`;
@@ -268,7 +212,7 @@ export default function AdminRulesConfigPage() {
           });
         return next;
       });
-      showToast(`Score updated for ${rule.display_name}`, true);
+      showToast(`Score updated`, true);
     } catch {
       showToast('Failed to save score', false);
     } finally {
@@ -282,8 +226,7 @@ export default function AdminRulesConfigPage() {
     paramValue: string,
     contentTypeId: number | null
   ) => {
-    const key = `param-${rule.id}-${paramKey}`;
-    setSaving(key);
+    setSaving(`param-${rule.id}-${paramKey}`);
     try {
       const res = await fetch(`/api/admin/parameters/${rule.id}`, {
         method: 'PUT',
@@ -291,7 +234,7 @@ export default function AdminRulesConfigPage() {
         body: JSON.stringify({ contentTypeId, paramKey, paramValue }),
       });
       if (!res.ok) throw new Error('Save failed');
-      showToast(`Parameter "${paramKey}" updated`, true);
+      showToast(`"${paramKey}" updated`, true);
     } catch {
       showToast('Failed to save parameter', false);
     } finally {
@@ -300,7 +243,7 @@ export default function AdminRulesConfigPage() {
   };
 
   const handleAddContentType = async () => {
-    if (!newCT.contentTypeKey || !newCT.displayName) return;
+    if (!newCT.displayName) return;
     setAddingCT(true);
     try {
       const res = await fetch('/api/admin/content-types', {
@@ -309,9 +252,10 @@ export default function AdminRulesConfigPage() {
         body: JSON.stringify(newCT),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to add content type');
-      showToast(`"${newCT.displayName}" content type added`, true);
-      setNewCT({ contentTypeKey: '', displayName: '', passThreshold: '90' });
+      if (!res.ok) throw new Error(data.error || 'Failed');
+      showToast(`"${newCT.displayName}" added`, true);
+      setNewCT({ displayName: '', passThreshold: '90' });
+      setShowAddForm(false);
       await loadConfig();
     } catch (e: any) {
       showToast(e.message, false);
@@ -320,27 +264,23 @@ export default function AdminRulesConfigPage() {
     }
   };
 
-  // ── Render guards ──────────────────────────────────────────────────────────
+  // ── Render guards ─────────────────────────────────────────────────────────
 
   if (loading) {
     return (
-      <div style={styles.centeredFull}>
-        <div style={styles.spinner} />
-        <p style={{ color: '#6b7280', marginTop: 16, fontSize: 14 }}>
-          Loading configuration…
-        </p>
+      <div style={S.centeredFull}>
+        <div style={S.spinner} />
+        <p style={{ color: '#64748b', marginTop: 16, fontSize: 14 }}>Loading configuration…</p>
       </div>
     );
   }
 
   if (error === 'access_denied') {
     return (
-      <div style={styles.centeredFull}>
+      <div style={S.centeredFull}>
         <div style={{ fontSize: 48, marginBottom: 16 }}>🔒</div>
-        <h2 style={{ color: '#f3f4f6', margin: 0, fontSize: 20 }}>
-          Access Denied
-        </h2>
-        <p style={{ color: '#6b7280', marginTop: 8, fontSize: 14 }}>
+        <h2 style={{ color: '#0f172a', margin: 0, fontSize: 20 }}>Access Denied</h2>
+        <p style={{ color: '#64748b', marginTop: 8, fontSize: 14 }}>
           Your account is not authorised to access the admin panel.
         </p>
       </div>
@@ -349,277 +289,293 @@ export default function AdminRulesConfigPage() {
 
   if (error) {
     return (
-      <div style={styles.centeredFull}>
-        <div style={{ fontSize: 40, marginBottom: 12 }}>⚠️</div>
-        <p style={{ color: '#f87171' }}>{error}</p>
-        <button onClick={loadConfig} style={styles.btnPrimary}>
-          Retry
-        </button>
+      <div style={S.centeredFull}>
+        <p style={{ color: '#dc2626' }}>{error}</p>
+        <button onClick={loadConfig} style={S.btnPrimary}>Retry</button>
       </div>
     );
   }
 
   if (!config) return null;
 
-  // Group rules by category
-  const categories = Array.from(
-    new Set(config.rules.map((r) => r.category))
-  ).sort();
-
+  const activeTab = config.contentTypes.find((ct) => ct.id === activeTabId) ?? config.contentTypes[0];
+  const categories = Array.from(new Set(config.rules.map((r) => r.category))).sort();
   const rulesByCategory = new Map<string, Rule[]>();
   for (const cat of categories) {
-    rulesByCategory.set(
-      cat,
-      config.rules.filter((r) => r.category === cat)
-    );
+    rulesByCategory.set(cat, config.rules.filter((r) => r.category === cat));
   }
 
-  // Parameters grouped by rule
   const paramsByRule = new Map<number, Parameter[]>();
   for (const p of config.parameters) {
     const arr = paramsByRule.get(p.rule_id) ?? [];
     arr.push(p);
     paramsByRule.set(p.rule_id, arr);
   }
+  const rulesWithParams = config.rules.filter((r) => paramsByRule.has(r.id));
 
-  const rulesWithParams = config.rules.filter((r) =>
-    paramsByRule.has(r.id)
-  );
+  const activeEnabledCount = config.contentTypeRules.filter(
+    (c) => c.content_type_id === activeTab?.id && c.is_enabled
+  ).length;
 
-  // ── Main render ────────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div style={styles.page}>
+    <div style={S.page}>
+
       {/* Header */}
-      <div style={styles.header}>
+      <div style={S.header}>
         <div>
-          <div style={styles.headerEyebrow}>Admin Panel</div>
-          <h1 style={styles.headerTitle}>Rules Configuration</h1>
+          <div style={S.eyebrow}>Admin Panel</div>
+          <h1 style={S.title}>Rules Configuration</h1>
         </div>
-        <button onClick={loadConfig} style={styles.btnSecondary}>
-          ↻ Refresh
-        </button>
+        <button onClick={loadConfig} style={S.btnSecondary}>↻ Refresh</button>
       </div>
 
-      {/* Stats bar */}
-      <div style={styles.statsBar}>
+      {/* Stats */}
+      <div style={S.statsBar}>
         {[
           { label: 'Rules', value: config.rules.length },
           { label: 'Content Types', value: config.contentTypes.length },
-          { label: 'Active Rules', value: config.contentTypeRules.filter((c) => c.is_enabled).length },
           { label: 'Parameters', value: config.parameters.length },
         ].map(({ label, value }) => (
-          <div key={label} style={styles.statBox}>
-            <span style={styles.statValue}>{value}</span>
-            <span style={styles.statLabel}>{label}</span>
+          <div key={label} style={S.statBox}>
+            <span style={S.statValue}>{value}</span>
+            <span style={S.statLabel}>{label}</span>
           </div>
         ))}
       </div>
 
-      {/* Rules Grid */}
-      <section style={styles.section}>
-        <h2 style={styles.sectionTitle}>Rules Matrix</h2>
-        <p style={styles.sectionSubtitle}>
-          Toggle rules on/off per content type. Override max score (leave blank to use rule default).
-        </p>
-
-        <div style={{ overflowX: 'auto' }}>
-          <table style={styles.table}>
-            <thead>
-              <tr>
-                <th style={{ ...styles.th, minWidth: 280, textAlign: 'left' }}>
-                  Rule
-                </th>
-                <th style={{ ...styles.th, width: 72, textAlign: 'center', color: '#6b7280' }}>
-                  Default
-                </th>
-                {config.contentTypes.map((ct) => (
-                  <th
-                    key={ct.id}
-                    style={{ ...styles.th, minWidth: 160, textAlign: 'center' }}
-                  >
-                    <div>{ct.display_name}</div>
-                    <div style={{ fontSize: 10, color: '#6b7280', fontWeight: 400, marginTop: 2 }}>
-                      pass ≥ {ct.pass_threshold}
-                    </div>
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {categories.map((cat) => {
-                const isExpanded = expandedCategories.has(cat);
-                const catRules = rulesByCategory.get(cat) ?? [];
-
-                return (
-                  <>
-                    {/* Category row */}
-                    <tr key={`cat-${cat}`}>
-                      <td
-                        colSpan={2 + config.contentTypes.length}
-                        style={styles.categoryRow}
-                        onClick={() => {
-                          setExpandedCategories((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(cat)) next.delete(cat);
-                            else next.add(cat);
-                            return next;
-                          });
-                        }}
-                      >
-                        <span style={{ marginRight: 8 }}>
-                          {isExpanded ? '▾' : '▸'}
-                        </span>
-                        {cat}
-                        <span style={styles.categoryCount}>
-                          {catRules.length} rules
-                        </span>
-                      </td>
-                    </tr>
-
-                    {isExpanded &&
-                      catRules.map((rule) => (
-                        <tr key={rule.id} style={styles.ruleRow}>
-                          {/* Rule name */}
-                          <td style={styles.td}>
-                            <div style={{ fontWeight: 500, fontSize: 13, color: '#1e293b' }}>
-                              {rule.display_name}
-                            </div>
-                            <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
-                              {rule.rule_key}
-                            </div>
-                          </td>
-
-                          {/* Default score */}
-                          <td style={{ ...styles.td, textAlign: 'center' }}>
-                            <span style={styles.defaultScore}>
-                              {rule.default_max_score}
-                            </span>
-                          </td>
-
-                          {/* Per content type */}
-                          {config.contentTypes.map((ct) => {
-                            const ctr = getCTR(ctrMap, rule.id, ct.id);
-                            const enabled = ctr?.is_enabled ?? false;
-                            const override = ctr?.max_score_override;
-                            const scoreVal =
-                              override !== null && override !== undefined
-                                ? String(override)
-                                : '';
-                            const savingToggle = saving === `toggle-${rule.id}-${ct.id}`;
-                            const savingScore = saving === `score-${rule.id}-${ct.id}`;
-
-                            return (
-                              <td
-                                key={ct.id}
-                                style={{
-                                  ...styles.td,
-                                  textAlign: 'center',
-                                  background: enabled
-                                    ? 'transparent'
-                                    : 'rgba(0,0,0,0.2)',
-                                }}
-                              >
-                                <div
-                                  style={{
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    alignItems: 'center',
-                                    gap: 6,
-                                  }}
-                                >
-                                  <Toggle
-                                    checked={enabled}
-                                    onChange={() =>
-                                      handleToggle(rule, ct, enabled)
-                                    }
-                                    disabled={savingToggle}
-                                  />
-                                  {enabled && (
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                      <input
-                                        type="number"
-                                        placeholder={String(rule.default_max_score)}
-                                        defaultValue={scoreVal}
-                                        min={0}
-                                        max={100}
-                                        step={0.5}
-                                        disabled={savingScore}
-                                        onBlur={(e) => {
-                                          const v = e.target.value.trim();
-                                          if (v !== scoreVal) {
-                                            handleScoreChange(rule, ct, v);
-                                          }
-                                        }}
-                                        style={styles.scoreInput}
-                                      />
-                                    </div>
-                                  )}
-                                </div>
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      ))}
-                  </>
-                );
-              })}
-            </tbody>
-          </table>
+      {/* Content Type Tabs */}
+      <section style={S.section}>
+        <div style={S.sectionHeader}>
+          <div>
+            <h2 style={S.sectionTitle}>Rules Matrix</h2>
+            <p style={S.sectionSubtitle}>
+              Select a content type to configure its rules. Toggle on/off and override max score per rule.
+            </p>
+          </div>
         </div>
+
+        {/* Tab bar */}
+        <div style={S.tabBar}>
+          {config.contentTypes.map((ct) => (
+            <button
+              key={ct.id}
+              onClick={() => setActiveTabId(ct.id)}
+              style={{
+                ...S.tab,
+                ...(ct.id === activeTab?.id ? S.tabActive : {}),
+              }}
+            >
+              {ct.display_name}
+              <span style={{
+                ...S.tabBadge,
+                background: ct.id === activeTab?.id ? '#ede9fe' : '#f1f5f9',
+                color: ct.id === activeTab?.id ? '#6366f1' : '#94a3b8',
+              }}>
+                {config.contentTypeRules.filter(
+                  (c) => c.content_type_id === ct.id && c.is_enabled
+                ).length}
+              </span>
+            </button>
+          ))}
+
+          {/* Add new tab button */}
+          {!showAddForm && (
+            <button
+              onClick={() => setShowAddForm(true)}
+              style={S.tabAdd}
+            >
+              + Add Content Type
+            </button>
+          )}
+        </div>
+
+        {/* Add content type inline form */}
+        {showAddForm && (
+          <div style={S.addForm}>
+            <div style={S.formGroup}>
+              <label style={S.formLabel}>Display Name</label>
+              <input
+                placeholder="e.g. Controls"
+                value={newCT.displayName}
+                onChange={(e) => setNewCT((p) => ({ ...p, displayName: e.target.value }))}
+                style={S.formInput}
+                autoFocus
+              />
+            </div>
+            <div style={S.formGroup}>
+              <label style={S.formLabel}>Pass Threshold</label>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                value={newCT.passThreshold}
+                onChange={(e) => setNewCT((p) => ({ ...p, passThreshold: e.target.value }))}
+                style={{ ...S.formInput, width: 80 }}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignSelf: 'flex-end' }}>
+              <button
+                onClick={handleAddContentType}
+                disabled={addingCT || !newCT.displayName}
+                style={{ ...S.btnPrimary, opacity: addingCT || !newCT.displayName ? 0.5 : 1 }}
+              >
+                {addingCT ? 'Adding…' : 'Add'}
+              </button>
+              <button
+                onClick={() => { setShowAddForm(false); setNewCT({ displayName: '', passThreshold: '90' }); }}
+                style={S.btnSecondary}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Active tab info bar */}
+        {activeTab && (
+          <div style={S.tabInfoBar}>
+            <span style={S.tabInfoName}>{activeTab.display_name}</span>
+            <span style={S.tabInfoMeta}>Pass threshold: {activeTab.pass_threshold}</span>
+            <span style={S.tabInfoMeta}>·</span>
+            <span style={S.tabInfoMeta}>{activeEnabledCount} of {config.rules.length} rules enabled</span>
+          </div>
+        )}
+
+        {/* Rules table for active tab */}
+        {activeTab && (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={S.table}>
+              <thead>
+                <tr>
+                  <th style={{ ...S.th, textAlign: 'left', minWidth: 280 }}>Rule</th>
+                  <th style={{ ...S.th, textAlign: 'center', width: 90 }}>Default</th>
+                  <th style={{ ...S.th, textAlign: 'center', width: 100 }}>Enabled</th>
+                  <th style={{ ...S.th, textAlign: 'center', width: 140 }}>Score Override</th>
+                </tr>
+              </thead>
+              <tbody>
+                {categories.map((cat) => {
+                  const isExpanded = expandedCategories.has(cat);
+                  const catRules = rulesByCategory.get(cat) ?? [];
+                  return (
+                    <>
+                      <tr key={`cat-${cat}`}>
+                        <td
+                          colSpan={4}
+                          style={S.categoryRow}
+                          onClick={() => setExpandedCategories((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(cat)) next.delete(cat); else next.add(cat);
+                            return next;
+                          })}
+                        >
+                          <span style={{ marginRight: 8 }}>{isExpanded ? '▾' : '▸'}</span>
+                          {cat}
+                          <span style={S.categoryCount}>{catRules.length} rules</span>
+                        </td>
+                      </tr>
+
+                      {isExpanded && catRules.map((rule) => {
+                        const ctr = ctrMap.get(`${rule.id}-${activeTab.id}`);
+                        const enabled = ctr?.is_enabled ?? false;
+                        const override = ctr?.max_score_override;
+                        const scoreVal = override !== null && override !== undefined ? String(override) : '';
+                        const isSavingToggle = saving === `toggle-${rule.id}-${activeTab.id}`;
+                        const isSavingScore = saving === `score-${rule.id}-${activeTab.id}`;
+
+                        return (
+                          <tr
+                            key={rule.id}
+                            style={{
+                              ...S.ruleRow,
+                              background: enabled ? '#ffffff' : '#fafafa',
+                            }}
+                          >
+                            <td style={S.td}>
+                              <div style={{ fontWeight: 500, fontSize: 13, color: '#1e293b' }}>
+                                {rule.display_name}
+                              </div>
+                              <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
+                                {rule.rule_key}
+                              </div>
+                            </td>
+                            <td style={{ ...S.td, textAlign: 'center' }}>
+                              <span style={S.defaultScore}>{rule.default_max_score}</span>
+                            </td>
+                            <td style={{ ...S.td, textAlign: 'center' }}>
+                              <Toggle
+                                checked={enabled}
+                                onChange={() => handleToggle(rule, activeTab, enabled)}
+                                disabled={isSavingToggle}
+                              />
+                            </td>
+                            <td style={{ ...S.td, textAlign: 'center' }}>
+                              {enabled ? (
+                                <input
+                                  type="number"
+                                  placeholder={String(rule.default_max_score)}
+                                  defaultValue={scoreVal}
+                                  min={0}
+                                  max={100}
+                                  step={0.5}
+                                  disabled={isSavingScore}
+                                  onBlur={(e) =>
+                                    handleScoreBlur(rule, activeTab, e.target.value.trim(), scoreVal)
+                                  }
+                                  style={S.scoreInput}
+                                />
+                              ) : (
+                                <span style={{ color: '#e2e8f0', fontSize: 12 }}>—</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       {/* Parameters */}
       {rulesWithParams.length > 0 && (
-        <section style={styles.section}>
-          <h2 style={styles.sectionTitle}>Rule Parameters</h2>
-          <p style={styles.sectionSubtitle}>
-            Tunable thresholds stored in RuleParameters. Changes take effect immediately.
+        <section style={S.section}>
+          <h2 style={S.sectionTitle}>Rule Parameters</h2>
+          <p style={S.sectionSubtitle}>
+            Global tunable thresholds. Changes take effect immediately.
           </p>
-
-          <div style={styles.paramsGrid}>
+          <div style={S.paramsGrid}>
             {rulesWithParams.map((rule) => {
               const params = paramsByRule.get(rule.id) ?? [];
               return (
-                <div key={rule.id} style={styles.paramCard}>
-                  <div style={styles.paramCardTitle}>{rule.display_name}</div>
-                  <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 12 }}>
-                    {rule.rule_key}
-                  </div>
+                <div key={rule.id} style={S.paramCard}>
+                  <div style={S.paramCardTitle}>{rule.display_name}</div>
+                  <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 14 }}>{rule.rule_key}</div>
                   {params.map((p) => {
                     const draftKey = `${p.rule_id}-${p.param_key}`;
                     const draft = paramDrafts[draftKey] ?? p.param_value;
                     const isSaving = saving === `param-${p.rule_id}-${p.param_key}`;
-
+                    const unchanged = draft === p.param_value;
                     return (
-                      <div key={p.id} style={styles.paramRow}>
-                        <label style={styles.paramLabel}>{p.param_key}</label>
+                      <div key={p.param_key} style={S.paramRow}>
+                        <label style={S.paramLabel}>{p.param_key}</label>
                         <div style={{ display: 'flex', gap: 6 }}>
                           <input
                             value={draft}
                             onChange={(e) =>
-                              setParamDrafts((prev) => ({
-                                ...prev,
-                                [draftKey]: e.target.value,
-                              }))
+                              setParamDrafts((prev) => ({ ...prev, [draftKey]: e.target.value }))
                             }
-                            style={styles.paramInput}
+                            style={S.paramInput}
                           />
                           <button
-                            onClick={() =>
-                              handleParamSave(
-                                rule,
-                                p.param_key,
-                                draft,
-                                p.content_type_id
-                              )
-                            }
-                            disabled={isSaving || draft === p.param_value}
-                            style={{
-                              ...styles.btnSave,
-                              opacity:
-                                isSaving || draft === p.param_value ? 0.4 : 1,
-                            }}
+                            onClick={() => handleParamSave(rule, p.param_key, draft, p.content_type_id)}
+                            disabled={isSaving || unchanged}
+                            style={{ ...S.btnSave, opacity: isSaving || unchanged ? 0.4 : 1 }}
                           >
                             {isSaving ? '…' : 'Save'}
                           </button>
@@ -634,87 +590,14 @@ export default function AdminRulesConfigPage() {
         </section>
       )}
 
-      {/* Add Content Type */}
-      <section style={styles.section}>
-        <h2 style={styles.sectionTitle}>Add Content Type</h2>
-        <p style={styles.sectionSubtitle}>
-          Creates a new ContentTypes row and auto-populates ContentTypeRules for all 31 existing rules (enabled by default).
-        </p>
-
-        <div style={styles.addCTForm}>
-          <div style={styles.formGroup}>
-            <label style={styles.formLabel}>Key</label>
-            <input
-              placeholder="e.g. controls"
-              value={newCT.contentTypeKey}
-              onChange={(e) =>
-                setNewCT((p) => ({ ...p, contentTypeKey: e.target.value }))
-              }
-              style={styles.formInput}
-            />
-          </div>
-          <div style={styles.formGroup}>
-            <label style={styles.formLabel}>Display Name</label>
-            <input
-              placeholder="e.g. Controls"
-              value={newCT.displayName}
-              onChange={(e) =>
-                setNewCT((p) => ({ ...p, displayName: e.target.value }))
-              }
-              style={styles.formInput}
-            />
-          </div>
-          <div style={styles.formGroup}>
-            <label style={styles.formLabel}>Pass Threshold</label>
-            <input
-              type="number"
-              min={0}
-              max={100}
-              value={newCT.passThreshold}
-              onChange={(e) =>
-                setNewCT((p) => ({ ...p, passThreshold: e.target.value }))
-              }
-              style={{ ...styles.formInput, width: 80 }}
-            />
-          </div>
-          <button
-            onClick={handleAddContentType}
-            disabled={
-              addingCT || !newCT.contentTypeKey || !newCT.displayName
-            }
-            style={{
-              ...styles.btnPrimary,
-              alignSelf: 'flex-end',
-              opacity: addingCT || !newCT.contentTypeKey || !newCT.displayName ? 0.5 : 1,
-            }}
-          >
-            {addingCT ? 'Adding…' : '+ Add Content Type'}
-          </button>
-        </div>
-
-        {/* Existing content types summary */}
-        <div style={{ marginTop: 20, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          {config.contentTypes.map((ct) => (
-            <div key={ct.id} style={styles.ctChip}>
-              <span style={{ fontWeight: 600 }}>{ct.display_name}</span>
-              <span style={{ color: '#6b7280', marginLeft: 6, fontSize: 11 }}>
-                {ct.content_type_key} · pass ≥ {ct.pass_threshold}
-              </span>
-            </div>
-          ))}
-        </div>
-      </section>
-
       {/* Toast */}
       {toast && (
-        <div
-          style={{
-            ...styles.toast,
-            background: toast.ok ? '#f0fdf4' : '#fef2f2',
-            borderColor: toast.ok ? '#86efac' : '#fca5a5',
-            color: toast.ok ? '#15803d' : '#dc2626',
-          }}
-        >
+        <div style={{
+          ...S.toast,
+          background: toast.ok ? '#f0fdf4' : '#fef2f2',
+          borderColor: toast.ok ? '#86efac' : '#fca5a5',
+          color: toast.ok ? '#15803d' : '#dc2626',
+        }}>
           {toast.ok ? '✓' : '✗'} {toast.msg}
         </div>
       )}
@@ -724,14 +607,14 @@ export default function AdminRulesConfigPage() {
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
-const styles: Record<string, React.CSSProperties> = {
+const S: Record<string, React.CSSProperties> = {
   page: {
     minHeight: '100vh',
     background: '#f8fafc',
     color: '#1e293b',
     fontFamily: "'Inter', 'Segoe UI', system-ui, sans-serif",
     padding: '32px 32px 80px',
-    maxWidth: 1400,
+    maxWidth: 1200,
     margin: '0 auto',
   },
   centeredFull: {
@@ -741,7 +624,6 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     justifyContent: 'center',
     background: '#f8fafc',
-    color: '#1e293b',
     fontFamily: "'Inter', system-ui, sans-serif",
   },
   header: {
@@ -752,15 +634,15 @@ const styles: Record<string, React.CSSProperties> = {
     paddingBottom: 20,
     borderBottom: '1px solid #e2e8f0',
   },
-  headerEyebrow: {
+  eyebrow: {
     fontSize: 11,
     letterSpacing: '0.1em',
-    textTransform: 'uppercase',
+    textTransform: 'uppercase' as const,
     color: '#6366f1',
     fontWeight: 700,
     marginBottom: 4,
   },
-  headerTitle: {
+  title: {
     margin: 0,
     fontSize: 22,
     fontWeight: 700,
@@ -771,7 +653,6 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     gap: 12,
     marginBottom: 32,
-    flexWrap: 'wrap',
   },
   statBox: {
     background: '#ffffff',
@@ -779,7 +660,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 8,
     padding: '14px 22px',
     display: 'flex',
-    flexDirection: 'column',
+    flexDirection: 'column' as const,
     gap: 2,
     minWidth: 110,
     boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
@@ -792,50 +673,136 @@ const styles: Record<string, React.CSSProperties> = {
   statLabel: {
     fontSize: 11,
     color: '#94a3b8',
-    textTransform: 'uppercase',
+    textTransform: 'uppercase' as const,
     letterSpacing: '0.07em',
     fontWeight: 600,
   },
   section: {
     marginBottom: 48,
   },
+  sectionHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 16,
+  },
   sectionTitle: {
     fontSize: 15,
     fontWeight: 700,
     color: '#0f172a',
     margin: '0 0 4px',
-    letterSpacing: '-0.01em',
   },
   sectionSubtitle: {
     fontSize: 13,
     color: '#64748b',
-    margin: '0 0 16px',
+    margin: 0,
+  },
+  tabBar: {
+    display: 'flex',
+    gap: 4,
+    borderBottom: '2px solid #e2e8f0',
+    marginBottom: 0,
+    flexWrap: 'wrap' as const,
+  },
+  tab: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    padding: '9px 16px',
+    fontSize: 13,
+    fontWeight: 500,
+    color: '#64748b',
+    background: 'transparent',
+    border: 'none',
+    borderBottom: '2px solid transparent',
+    marginBottom: -2,
+    cursor: 'pointer',
+    borderRadius: '6px 6px 0 0',
+    transition: 'color 0.1s',
+    fontFamily: "'Inter', system-ui, sans-serif",
+  },
+  tabActive: {
+    color: '#6366f1',
+    fontWeight: 600,
+    borderBottom: '2px solid #6366f1',
+    background: '#fafbff',
+  },
+  tabBadge: {
+    fontSize: 11,
+    fontWeight: 700,
+    padding: '1px 7px',
+    borderRadius: 10,
+  },
+  tabAdd: {
+    display: 'flex',
+    alignItems: 'center',
+    padding: '9px 14px',
+    fontSize: 12,
+    fontWeight: 600,
+    color: '#6366f1',
+    background: 'transparent',
+    border: 'none',
+    marginBottom: -2,
+    cursor: 'pointer',
+    borderRadius: '6px 6px 0 0',
+    fontFamily: "'Inter', system-ui, sans-serif",
+    letterSpacing: '0.01em',
+  },
+  addForm: {
+    display: 'flex',
+    gap: 16,
+    flexWrap: 'wrap' as const,
+    alignItems: 'flex-end',
+    background: '#fafbff',
+    border: '1px solid #e0e7ff',
+    borderTop: 'none',
+    borderRadius: '0 0 8px 8px',
+    padding: '16px 20px',
+    marginBottom: 0,
+  },
+  tabInfoBar: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+    padding: '10px 16px',
+    background: '#fafbff',
+    border: '1px solid #e2e8f0',
+    borderTop: 'none',
+    marginBottom: 1,
+  },
+  tabInfoName: {
+    fontSize: 13,
+    fontWeight: 700,
+    color: '#6366f1',
+  },
+  tabInfoMeta: {
+    fontSize: 12,
+    color: '#94a3b8',
   },
   table: {
     width: '100%',
-    borderCollapse: 'collapse',
+    borderCollapse: 'collapse' as const,
     fontSize: 13,
     border: '1px solid #e2e8f0',
-    borderRadius: 8,
-    overflow: 'hidden',
+    borderTop: 'none',
     background: '#ffffff',
     boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
   },
   th: {
-    padding: '11px 16px',
+    padding: '10px 16px',
     background: '#f1f5f9',
     color: '#475569',
     fontSize: 11,
     fontWeight: 700,
     letterSpacing: '0.06em',
-    textTransform: 'uppercase',
+    textTransform: 'uppercase' as const,
     borderBottom: '1px solid #e2e8f0',
-    whiteSpace: 'nowrap',
+    whiteSpace: 'nowrap' as const,
   },
   td: {
     padding: '10px 16px',
     borderBottom: '1px solid #f1f5f9',
-    verticalAlign: 'middle',
+    verticalAlign: 'middle' as const,
   },
   categoryRow: {
     background: '#f8fafc',
@@ -843,38 +810,35 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 11,
     fontWeight: 700,
     letterSpacing: '0.09em',
-    textTransform: 'uppercase',
+    textTransform: 'uppercase' as const,
     color: '#94a3b8',
     cursor: 'pointer',
     borderBottom: '1px solid #e2e8f0',
-    userSelect: 'none',
+    userSelect: 'none' as const,
   },
   categoryCount: {
     marginLeft: 10,
     fontSize: 10,
     color: '#cbd5e1',
     fontWeight: 500,
-    letterSpacing: '0.04em',
   },
   ruleRow: {
-    background: '#ffffff',
     transition: 'background 0.1s',
   },
   defaultScore: {
     fontSize: 12,
     color: '#94a3b8',
-    fontVariantNumeric: 'tabular-nums',
     fontWeight: 600,
   },
   scoreInput: {
-    width: 60,
+    width: 80,
     background: '#f8fafc',
     border: '1px solid #e2e8f0',
     borderRadius: 4,
     color: '#1e293b',
-    fontSize: 12,
-    padding: '3px 6px',
-    textAlign: 'center',
+    fontSize: 13,
+    padding: '4px 8px',
+    textAlign: 'center' as const,
     fontFamily: 'inherit',
     outline: 'none',
   },
@@ -896,14 +860,12 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#0f172a',
     marginBottom: 2,
   },
-  paramRow: {
-    marginBottom: 10,
-  },
+  paramRow: { marginBottom: 10 },
   paramLabel: {
     display: 'block',
     fontSize: 10,
     color: '#94a3b8',
-    textTransform: 'uppercase',
+    textTransform: 'uppercase' as const,
     letterSpacing: '0.08em',
     marginBottom: 4,
     fontWeight: 600,
@@ -919,7 +881,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'inherit',
     outline: 'none',
     width: '100%',
-    boxSizing: 'border-box',
+    boxSizing: 'border-box' as const,
   },
   btnSave: {
     background: '#6366f1',
@@ -930,54 +892,41 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12,
     fontWeight: 600,
     cursor: 'pointer',
-    letterSpacing: '0.03em',
     fontFamily: 'inherit',
-    whiteSpace: 'nowrap',
-  },
-  addCTForm: {
-    display: 'flex',
-    gap: 16,
-    flexWrap: 'wrap',
-    alignItems: 'flex-end',
-    background: '#ffffff',
-    border: '1px solid #e2e8f0',
-    borderRadius: 8,
-    padding: '20px 24px',
-    boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+    whiteSpace: 'nowrap' as const,
   },
   formGroup: {
     display: 'flex',
-    flexDirection: 'column',
+    flexDirection: 'column' as const,
     gap: 6,
   },
   formLabel: {
     fontSize: 11,
     color: '#64748b',
-    textTransform: 'uppercase',
+    textTransform: 'uppercase' as const,
     letterSpacing: '0.07em',
     fontWeight: 600,
   },
   formInput: {
-    background: '#f8fafc',
-    border: '1px solid #e2e8f0',
+    background: '#ffffff',
+    border: '1px solid #c7d2fe',
     borderRadius: 5,
     color: '#1e293b',
     fontSize: 13,
-    padding: '8px 12px',
+    padding: '7px 12px',
     fontFamily: 'inherit',
     outline: 'none',
-    minWidth: 160,
+    minWidth: 180,
   },
   btnPrimary: {
     background: '#6366f1',
     color: '#fff',
     border: 'none',
     borderRadius: 6,
-    padding: '9px 18px',
+    padding: '8px 18px',
     fontSize: 13,
     fontWeight: 600,
     cursor: 'pointer',
-    letterSpacing: '0.02em',
     fontFamily: 'inherit',
   },
   btnSecondary: {
@@ -985,24 +934,14 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#64748b',
     border: '1px solid #e2e8f0',
     borderRadius: 6,
-    padding: '8px 14px',
+    padding: '7px 14px',
     fontSize: 12,
     cursor: 'pointer',
     fontFamily: 'inherit',
-    letterSpacing: '0.02em',
     fontWeight: 500,
   },
-  ctChip: {
-    background: '#ffffff',
-    border: '1px solid #e2e8f0',
-    borderRadius: 5,
-    padding: '6px 14px',
-    fontSize: 12,
-    color: '#1e293b',
-    boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
-  },
   toast: {
-    position: 'fixed',
+    position: 'fixed' as const,
     bottom: 24,
     right: 24,
     padding: '11px 18px',
@@ -1012,7 +951,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 500,
     fontFamily: "'Inter', system-ui, sans-serif",
     zIndex: 999,
-    boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+    boxShadow: '0 4px 16px rgba(0,0,0,0.1)',
   },
   spinner: {
     width: 32,
