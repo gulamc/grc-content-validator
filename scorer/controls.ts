@@ -354,7 +354,8 @@ function evalDescNoModalVerbs(desc: string): ScoringCheckResult {
   if (hasModal && hasEnsure) {
     violation = `Avoid modal verbs (${modalMatches.map(m => `'${m}'`).join(', ')}) and 'ensure' — state the outcome directly`;
   } else if (hasEnsure) {
-    violation = `Avoid '${ensureMatches[0].toLowerCase()}' — state the outcome directly (e.g., 'data appropriateness is maintained' instead of 'to ensure data appropriateness')`;
+    const ensureWord = (ensureMatches || [])[0]?.toLowerCase() || 'ensure';
+    violation = `Avoid '${ensureWord}' — state the outcome directly (e.g., 'data appropriateness is maintained' instead of 'to ensure data appropriateness')`;
   } else {
     violation = `Avoid modal verbs: ${verbList}`;
   }
