@@ -102,7 +102,7 @@ const JARGON_WORDS = /\b(utilize|leverage|synergy|holistic|best[-\s]?of[-\s]?bre
 const ROLE_SPECIFIC = /\b(it|security|engineering|devops|audit|privacy|hr|legal|finance)\s+(team|dept|department|administrator|manager)\b/i;
 const DIRECTIVE_VERBS = /^\s*(configure|install|deploy|enable|set\s*up|create|develop|implement|establish|define)\b/i;
 const PRESENT_TENSE_INDICATORS = /\b(is|are|has|have|exists?|remains?|includes?|contains?|provides?|ensures?|maintains?|supports?|performs?|conducts?)\b/i;
-const PASSIVE_VOICE_INDICATORS = /\b(is|are|be|being|been)\s+[a-z]+ed\b/i;
+const PASSIVE_VOICE_INDICATORS = /\b(is|are|be|being|been)\s+(?:[a-z]+ly\s+)?[a-z]+ed\b/i;
 
 
 // ========== ID QUALITY CHECKS (15% weight) ==========
@@ -330,30 +330,42 @@ function evalDescPassiveVoice(desc: string): ScoringCheckResult {
 }
 
 function evalDescNoModalVerbs(desc: string): ScoringCheckResult {
-  const modalPattern = /\b(should|could|may|might|must|shall|ensure|ensures|ensured)\b/gi;
-  const matches = desc.match(modalPattern);
-  const found = matches ? Array.from(new Set(matches.map(m => m.toLowerCase()))) : [];
+  const modalPattern = /\b(should|could|may|might|must|shall)\b/gi;
+  const ensurePattern = /\b(ensure|ensures|ensured)\b/gi;
+  const modalMatches = desc.match(modalPattern) || [];
+  const ensureMatches = desc.match(ensurePattern) || [];
+  const allFound = [...new Set([...modalMatches, ...ensureMatches].map(m => m.toLowerCase()))];
   
-  if (found.length === 0) {
+  if (allFound.length === 0) {
     return {
       id: "desc.no_modal_verbs",
-      label: "No modal verbs (present tense state)",
+      label: "No prohibited verbs",
       points: 25,
       max: 25,
       status: "PASS"
     };
   }
   
-  const verbList = found.map(v => `'${v}'`).join(', ');
-  const violation = `Avoid modal verbs: ${verbList}`;
+  const verbList = allFound.map(v => `'${v}'`).join(', ');
+  const hasModal = modalMatches.length > 0;
+  const hasEnsure = ensureMatches.length > 0;
+  
+  let violation: string;
+  if (hasModal && hasEnsure) {
+    violation = `Avoid modal verbs (${modalMatches.map(m => `'${m}'`).join(', ')}) and 'ensure' — state the outcome directly`;
+  } else if (hasEnsure) {
+    violation = `Avoid '${ensureMatches[0].toLowerCase()}' — state the outcome directly (e.g., 'data appropriateness is maintained' instead of 'to ensure data appropriateness')`;
+  } else {
+    violation = `Avoid modal verbs: ${verbList}`;
+  }
   
   return {
     id: "desc.no_modal_verbs",
-    label: "No modal verbs (present tense state)",
+    label: "No prohibited verbs",
     points: 0,
     max: 25,
     status: "FAIL",
-    notes: `Found ${found.length} modal verb type(s)`,
+    notes: `Found: ${verbList}`,
     violations: [violation]
   };
 }
