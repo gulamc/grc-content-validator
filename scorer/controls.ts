@@ -103,7 +103,7 @@ const ROLE_SPECIFIC = /\b(it|security|engineering|devops|audit|privacy|hr|legal|
 const DIRECTIVE_VERBS = /^\s*(configure|install|deploy|enable|set\s*up|create|develop|implement|establish|define)\b/i;
 const PRESENT_TENSE_INDICATORS = /\b(is|are|has|have|exists?|remains?|includes?|contains?|provides?|ensures?|maintains?|supports?|performs?|conducts?)\b/i;
 const PASSIVE_VOICE_INDICATORS = /\b(is|are|be|being|been)\s+[a-z]+ed\b/i;
-const ACTION_WORDS = /\b(protection|detection|monitoring|review|assessment|management|implementation|configuration|establishment|maintenance|planning|testing|auditing|tracking|reporting|training|enforcement|validation|verification|analysis|governance|policies|policy|compliance|classification|inventory|examination|control|controls|standards|procedures|oversight|documentation|authorization|authentication|encryption|response|recovery|remediation|mitigation|evaluation|notification|registration|integration|deployment|decommissioning|procurement|transparency|accountability|fairness|logging)\b/i;
+
 
 // ========== ID QUALITY CHECKS (15% weight) ==========
 
@@ -203,31 +203,7 @@ function evalNameConcise(name: string): ScoringCheckResult {
   };
 }
 
-function evalNameActionOriented(name: string): ScoringCheckResult {
-  const hasActionWord = ACTION_WORDS.test(name);
-  const isVague = /\b(things|stuff|items|matters|issues)\b/i.test(name);
-  let points = 25;
-  const violations: string[] = [];
-  
-  if (!hasActionWord) {
-    points -= 8;
-    violations.push("Use action-oriented or specific language (e.g., 'Protection of...', 'Access Review Process')");
-  }
-  if (isVague) {
-    points -= 5;
-    violations.push("Avoid vague terms. Be specific about what the control addresses.");
-  }
-  
-  return {
-    id: "name.action_oriented",
-    label: "Action-oriented or specific language",
-    points: Math.max(0, points),
-    max: 25,
-    status: points === 25 ? "PASS" : points >= 18 ? "WARN" : "FAIL",
-    notes: violations[0],
-    violations: violations.length > 0 ? dedupe(violations) : undefined
-  };
-}
+
 
 function evalNamePurposeClarity(name: string): ScoringCheckResult {
   const tooShort = name.trim().split(/\s+/).length < 2;
@@ -955,7 +931,6 @@ export function scoreControl(item: ControlInput): ControlScoreResponse {
   // Name Dimension (15% weight)
   const nameChecks: ScoringCheckResult[] = [
     evalNameConcise(name),
-    evalNameActionOriented(name),
     evalNamePurposeClarity(name),
     evalNameRoleNeutral(name),
     evalNameNoModalVerbs(name)
