@@ -135,7 +135,7 @@ export default function AdminRulesConfigPage() {
 
       const drafts: Record<string, string> = {};
       for (const p of data.parameters) {
-        drafts[`${p.rule_id}-${p.param_key}`] = p.param_value;
+        drafts[`${p.rule_id}-${p.content_type_id}-${p.param_key}`] = p.param_value;
       }
       setParamDrafts(drafts);
 
@@ -304,14 +304,6 @@ export default function AdminRulesConfigPage() {
   for (const cat of categories) {
     rulesByCategory.set(cat, config.rules.filter((r) => r.category === cat));
   }
-
-  const paramsByRule = new Map<number, Parameter[]>();
-  for (const p of config.parameters) {
-    const arr = paramsByRule.get(p.rule_id) ?? [];
-    arr.push(p);
-    paramsByRule.set(p.rule_id, arr);
-  }
-  const rulesWithParams = config.rules.filter((r) => paramsByRule.has(r.id));
 
   const activeEnabledCount = config.contentTypeRules.filter(
     (c) => c.content_type_id === activeTab?.id && c.is_enabled
@@ -542,53 +534,63 @@ export default function AdminRulesConfigPage() {
         )}
       </section>
 
-      {/* Parameters */}
-      {rulesWithParams.length > 0 && (
-        <section style={S.section}>
-          <h2 style={S.sectionTitle}>Rule Parameters</h2>
-          <p style={S.sectionSubtitle}>
-            Global tunable thresholds. Changes take effect immediately.
-          </p>
-          <div style={S.paramsGrid}>
-            {rulesWithParams.map((rule) => {
-              const params = paramsByRule.get(rule.id) ?? [];
-              return (
-                <div key={rule.id} style={S.paramCard}>
-                  <div style={S.paramCardTitle}>{rule.display_name}</div>
-                  <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 14 }}>{rule.rule_key}</div>
-                  {params.map((p) => {
-                    const draftKey = `${p.rule_id}-${p.param_key}`;
-                    const draft = paramDrafts[draftKey] ?? p.param_value;
-                    const isSaving = saving === `param-${p.rule_id}-${p.param_key}`;
-                    const unchanged = draft === p.param_value;
-                    return (
-                      <div key={p.param_key} style={S.paramRow}>
-                        <label style={S.paramLabel}>{p.param_key}</label>
-                        <div style={{ display: 'flex', gap: 6 }}>
-                          <input
-                            value={draft}
-                            onChange={(e) =>
-                              setParamDrafts((prev) => ({ ...prev, [draftKey]: e.target.value }))
-                            }
-                            style={S.paramInput}
-                          />
-                          <button
-                            onClick={() => handleParamSave(rule, p.param_key, draft, p.content_type_id)}
-                            disabled={isSaving || unchanged}
-                            style={{ ...S.btnSave, opacity: isSaving || unchanged ? 0.4 : 1 }}
-                          >
-                            {isSaving ? '…' : 'Save'}
-                          </button>
+      {/* Parameters — scoped to active tab */}
+      {activeTab && (() => {
+        const tabParams = config.parameters.filter(
+          (p) => p.content_type_id === activeTab.id
+        );
+        const rulesWithTabParams = config.rules.filter((r) =>
+          tabParams.some((p) => p.rule_id === r.id)
+        );
+        if (rulesWithTabParams.length === 0) return null;
+
+        return (
+          <section style={S.section}>
+            <h2 style={S.sectionTitle}>Rule Parameters</h2>
+            <p style={S.sectionSubtitle}>
+              Tunable thresholds for <strong>{activeTab.display_name}</strong>. Changes take effect immediately.
+            </p>
+            <div style={S.paramsGrid}>
+              {rulesWithTabParams.map((rule) => {
+                const params = tabParams.filter((p) => p.rule_id === rule.id);
+                return (
+                  <div key={rule.id} style={S.paramCard}>
+                    <div style={S.paramCardTitle}>{rule.display_name}</div>
+                    <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 14 }}>{rule.rule_key}</div>
+                    {params.map((p) => {
+                      const draftKey = `${p.rule_id}-${activeTab.id}-${p.param_key}`;
+                      const draft = paramDrafts[draftKey] ?? p.param_value;
+                      const isSaving = saving === `param-${p.rule_id}-${p.param_key}`;
+                      const unchanged = draft === p.param_value;
+                      return (
+                        <div key={p.param_key} style={S.paramRow}>
+                          <label style={S.paramLabel}>{p.param_key}</label>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <input
+                              value={draft}
+                              onChange={(e) =>
+                                setParamDrafts((prev) => ({ ...prev, [draftKey]: e.target.value }))
+                              }
+                              style={S.paramInput}
+                            />
+                            <button
+                              onClick={() => handleParamSave(rule, p.param_key, draft, activeTab.id)}
+                              disabled={isSaving || unchanged}
+                              style={{ ...S.btnSave, opacity: isSaving || unchanged ? 0.4 : 1 }}
+                            >
+                              {isSaving ? '…' : 'Save'}
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        );
+      })()}
 
       {/* Toast */}
       {toast && (
