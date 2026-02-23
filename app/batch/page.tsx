@@ -49,7 +49,7 @@ export default function BatchValidatorPage() {
       const batchResults = await processExcelFile(file, contentType);
       
       // Track to analytics DB (fire-and-forget)
-      trackBatchResults(batchResults, Date.now() - startTime).catch(() => {});
+      trackBatchResults(batchResults, Date.now() - startTime, file.name).catch(() => {});
       
       setResults(batchResults);
     } catch (err: any) {
