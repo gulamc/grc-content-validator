@@ -47,7 +47,7 @@ export default function InsightsValidatorPage() {
   const [result, setResult] = useState<ValidationResult | null>(null);
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [expandedDimensions, setExpandedDimensions] = useState<Set<string>>(new Set());
-  const [useV2, setUseV2] = useState(false);
+  const [useV2, setUseV2] = useState(true);
 
   // Helper function to render text with bold markers
   const renderWithBold = (text: string) => {

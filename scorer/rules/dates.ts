@@ -24,7 +24,7 @@ registerRule('dates', ({ text }: { text: string; params: Record<string, string> 
     const month = match[3];
     const year = match[4];
     const ukFormat = match[0];
-    const usFormat = `${month} ${day}, ${year}`; // US format doesn't use ordinals
+    const usFormat = `${month} ${parseInt(day, 10)}, ${year}`; // Strip leading zero
     const location = getParaLineRef(text, match.index || 0);
 
     issues.push(

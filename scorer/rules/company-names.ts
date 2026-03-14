@@ -25,8 +25,9 @@ registerRule('company_names', ({ text }: { text: string; params: Record<string, 
   ];
 
   // Legal entity pattern
+  // Allows mixed case words including all-caps (e.g., "Eightfold AI Inc.")
   // Note: Excludes AG when preceded by state/location names (e.g., "California AG" = Attorney General)
-  const legalEntityPattern = /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(Inc|Corp|LLC|Ltd|GmbH|SA|NV|BV|Plc)\b/g;
+  const legalEntityPattern = /\b([A-Z][A-Za-z]*(?:\s+[A-Z][A-Za-z]*)*)\s+(Inc|Corp|LLC|Ltd|GmbH|SA|NV|BV|Plc)\.?\b/g;
 
   interface CompanyMention {
     company: string;
@@ -34,9 +35,59 @@ registerRule('company_names', ({ text }: { text: string; params: Record<string, 
     location: string;
     context: string;
     isEnforcement: boolean;
+    isCaseParty: boolean;
   }
 
   const companyMentions: CompanyMention[] = [];
+
+  // === Detect case parties from "v." / "vs." patterns ===
+  // Catches: "Kistler v. Eightfold AI Inc.", "Smith vs. Acme Corp"
+  const casePattern = /\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*)\s+(?:v\.|vs\.)\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*(?:\s+(?:Inc|Corp|LLC|Ltd|GmbH|SA|NV|BV|Plc)\.?)?)\b/g;
+  const casePartyNames: Set<string> = new Set();
+
+  for (const match of Array.from(text.matchAll(casePattern))) {
+    const defendant = match[2];
+    const shortName = defendant.split(/\s+/)[0];
+    if (shortName.length >= 3) {
+      casePartyNames.add(shortName);
+    }
+  }
+
+  // Check case party names for repeated mentions OUTSIDE case citations
+  for (const partyName of casePartyNames) {
+    const partyPattern = new RegExp('\\b' + partyName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'g');
+    const allMentions = Array.from(text.matchAll(partyPattern));
+
+    const bodyMentions = allMentions.filter(m => {
+      const surroundingStart = Math.max(0, (m.index || 0) - 50);
+      const surroundingEnd = Math.min(text.length, (m.index || 0) + partyName.length + 50);
+      const surrounding = text.substring(surroundingStart, surroundingEnd);
+      return !/ v\. | vs\. /i.test(surrounding);
+    });
+
+    if (bodyMentions.length >= 2) {
+      for (const mention of bodyMentions) {
+        const position = mention.index || 0;
+        const location = getParaLineRef(text, position);
+
+        if (companyMentions.some(c => Math.abs(c.position - position) < 5)) continue;
+
+        companyMentions.push({
+          company: partyName,
+          position,
+          location,
+          context: text.substring(Math.max(0, position - 50), Math.min(text.length, position + partyName.length + 50)),
+          isEnforcement: false,
+          isCaseParty: true,
+        });
+      }
+
+      issues.push(
+        `📋 <b>Company '${partyName}' from case citation appears ${bodyMentions.length} time(s) in body text.</b> ` +
+        `Style guide: avoid naming companies in Insights. Consider anonymizing (e.g., 'the AI platform provider' or 'the defendant company').`
+      );
+    }
+  }
 
   // Helper: Check if "AG" is likely Attorney General (not a company)
   function isAttorneyGeneral(text: string, position: number): boolean {
@@ -76,7 +127,8 @@ registerRule('company_names', ({ text }: { text: string; params: Record<string, 
         position,
         location,
         context: text.substring(contextStart, contextEnd),
-        isEnforcement
+        isEnforcement,
+        isCaseParty: false,
       });
 
       if (isEnforcement) {
@@ -116,7 +168,8 @@ registerRule('company_names', ({ text }: { text: string; params: Record<string, 
       position,
       location,
       context,
-      isEnforcement: false
+      isEnforcement: false,
+      isCaseParty: false,
     });
 
     issues.push(
