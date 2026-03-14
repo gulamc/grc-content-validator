@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getInsightsMetrics, getGrcMetrics } from '@/lib/analytics-db';
+import { getInsightsMetrics, getGrcMetrics, getOverviewMetrics } from '@/lib/analytics-db';
 
 /**
  * GET /api/analytics
@@ -9,10 +9,11 @@ import { getInsightsMetrics, getGrcMetrics } from '@/lib/analytics-db';
  */
 export async function GET() {
   try {
-    const [insights, controls, evidenceTasks] = await Promise.all([
+    const [insights, controls, evidenceTasks, overview] = await Promise.all([
       getInsightsMetrics(),
       getGrcMetrics('controls').catch(() => null),
       getGrcMetrics('evidence_tasks').catch(() => null),
+      getOverviewMetrics().catch(() => null),
     ]);
 
     return NextResponse.json({
@@ -21,6 +22,7 @@ export async function GET() {
       data: insights,
       controls,
       evidenceTasks,
+      overview,
     });
   } catch (error: any) {
     console.error('[Analytics API] Failed to fetch metrics:', error.message);

@@ -52,6 +52,12 @@ interface GrcMetrics {
   trendData: Array<{ month: string; avgScore: number }>;
 }
 
+interface OverviewMetrics {
+  topFailures: Array<{ reason: string; count: number; percentage: number }>;
+  trendData: Array<{ month: string; avgScore: number; passRate: number }>;
+  errorReduction: number | null;
+}
+
 // ============================================================
 // Component
 // ============================================================
@@ -60,6 +66,7 @@ export default function AnalyticsPage() {
   const [insights, setInsights] = useState(MOCK_INSIGHTS);
   const [controlsMetrics, setControlsMetrics] = useState<GrcMetrics | null>(null);
   const [etMetrics, setEtMetrics] = useState<GrcMetrics | null>(null);
+  const [overview, setOverview] = useState<OverviewMetrics | null>(null);
   const [isLive, setIsLive] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -72,6 +79,7 @@ export default function AnalyticsPage() {
           setInsights(json.data);
           if (json.controls) setControlsMetrics(json.controls);
           if (json.evidenceTasks) setEtMetrics(json.evidenceTasks);
+          if (json.overview) setOverview(json.overview);
           setIsLive(true);
         }
       } catch {
@@ -128,24 +136,18 @@ export default function AnalyticsPage() {
   const totalTimeSaved = validatorStats.reduce((sum, v) => sum + v.timeSaved, 0);
   const overallPassRate = Math.round((totalPassed / totalRuns) * 100);
 
-  // Top failures for overall section (mock)
-  const topFailures = [
-    { reason: 'Modal verbs', count: 183, percentage: 28 },
-    { reason: 'Missing preamble', count: 94, percentage: 22 },
-    { reason: 'Passive voice', count: 67, percentage: 18 },
-    { reason: 'Generic terms', count: 52, percentage: 16 },
-    { reason: 'Vendor references', count: 38, percentage: 12 },
-  ];
+  // Overview data: live if available, mock fallback
+  const topFailures = overview?.topFailures && overview.topFailures.length > 0
+    ? overview.topFailures
+    : [
+        { reason: 'No data yet', count: 0, percentage: 0 },
+      ];
 
-  // Trend data for overall section (mock for non-insights)
-  const trendData = [
-    { month: 'Jun', passRate: 85, avgScore: 84.2 },
-    { month: 'Jul', passRate: 87, avgScore: 85.8 },
-    { month: 'Aug', passRate: 89, avgScore: 87.1 },
-    { month: 'Sep', passRate: 90, avgScore: 88.4 },
-    { month: 'Oct', passRate: 91, avgScore: 89.2 },
-    { month: 'Nov', passRate: 93, avgScore: 90.5 },
-  ];
+  const trendData = overview?.trendData && overview.trendData.length > 0
+    ? overview.trendData
+    : [];
+
+  const errorReduction = overview?.errorReduction;
 
   return (
     <div className="min-h-screen bg-gray-50 p-8">
@@ -214,7 +216,7 @@ export default function AnalyticsPage() {
             </div>
           </div>
           <div className="text-3xl font-bold text-gray-900">{overallPassRate}%</div>
-          <p className="text-sm text-green-600 mt-1">↗ +8% from 6 months ago</p>
+          <p className="text-sm text-gray-500 mt-1">Across all validators</p>
         </div>
 
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
@@ -225,7 +227,7 @@ export default function AnalyticsPage() {
             </div>
           </div>
           <div className="text-3xl font-bold text-gray-900">{totalTimeSaved}hrs</div>
-          <p className="text-sm text-gray-500 mt-1">~8 min per validation</p>
+          <p className="text-sm text-gray-500 mt-1">Across all validators</p>
         </div>
 
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
@@ -235,8 +237,8 @@ export default function AnalyticsPage() {
               <AlertTriangle className="w-5 h-5 text-purple-600" />
             </div>
           </div>
-          <div className="text-3xl font-bold text-gray-900">-34%</div>
-          <p className="text-sm text-purple-600 mt-1">Since launch</p>
+          <div className="text-3xl font-bold text-gray-900">{errorReduction != null ? `${errorReduction}%` : '—'}</div>
+          <p className="text-sm text-purple-600 mt-1">{errorReduction != null ? 'Avg issues: first vs latest month' : 'Needs 2+ months of data'}</p>
         </div>
       </div>
 
@@ -245,52 +247,68 @@ export default function AnalyticsPage() {
         {/* Quality Trend Chart */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <h3 className="text-lg font-semibold text-gray-800 mb-4">Quality Improvement Trend</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={trendData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-              <XAxis dataKey="month" stroke="#6b7280" />
-              <YAxis stroke="#6b7280" domain={[80, 100]} />
-              <Tooltip 
-                contentStyle={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px' }}
-              />
-              <Legend />
-              <Line 
-                type="monotone" 
-                dataKey="passRate" 
-                stroke="#14b8a6" 
-                strokeWidth={3}
-                name="Pass Rate (%)"
-                dot={{ fill: '#14b8a6', r: 5 }}
-              />
-              <Line 
-                type="monotone" 
-                dataKey="avgScore" 
-                stroke="#3b82f6" 
-                strokeWidth={3}
-                name="Avg Score"
-                dot={{ fill: '#3b82f6', r: 5 }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-          <p className="text-sm text-gray-600 mt-4">
-            <span className="text-green-600 font-semibold">↗ 8% improvement</span> in pass rate over 6 months
-          </p>
+          {trendData.length > 1 ? (
+            <>
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={trendData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis dataKey="month" stroke="#6b7280" />
+                  <YAxis stroke="#6b7280" domain={[0, 100]} />
+                  <Tooltip 
+                    contentStyle={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px' }}
+                  />
+                  <Legend />
+                  <Line 
+                    type="monotone" 
+                    dataKey="passRate" 
+                    stroke="#14b8a6" 
+                    strokeWidth={3}
+                    name="Pass Rate (%)"
+                    dot={{ fill: '#14b8a6', r: 5 }}
+                  />
+                  <Line 
+                    type="monotone" 
+                    dataKey="avgScore" 
+                    stroke="#3b82f6" 
+                    strokeWidth={3}
+                    name="Avg Score"
+                    dot={{ fill: '#3b82f6', r: 5 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+              {trendData.length >= 2 && (
+                <p className="text-sm text-gray-600 mt-4">
+                  Avg score: {trendData[0].avgScore}% → {trendData[trendData.length - 1].avgScore}% over {trendData.length} months
+                </p>
+              )}
+            </>
+          ) : (
+            <div className="flex items-center justify-center h-[300px] bg-gray-50 rounded-lg">
+              <p className="text-sm text-gray-500">Trend chart will appear after 2+ months of validation data</p>
+            </div>
+          )}
         </div>
 
         {/* Top Failure Reasons */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <h3 className="text-lg font-semibold text-gray-800 mb-4">Top 5 Failure Reasons</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={topFailures} layout="vertical">
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-              <XAxis type="number" stroke="#6b7280" />
-              <YAxis dataKey="reason" type="category" width={120} stroke="#6b7280" />
-              <Tooltip 
-                contentStyle={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px' }}
-              />
-              <Bar dataKey="count" fill="#f97316" radius={[0, 4, 4, 0]} name="Occurrences" />
-            </BarChart>
-          </ResponsiveContainer>
+          {topFailures.length > 0 && topFailures[0].count > 0 ? (
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={topFailures} layout="vertical">
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis type="number" stroke="#6b7280" />
+                <YAxis dataKey="reason" type="category" width={150} stroke="#6b7280" tick={{ fontSize: 12 }} />
+                <Tooltip 
+                  contentStyle={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px' }}
+                />
+                <Bar dataKey="count" fill="#f97316" radius={[0, 4, 4, 0]} name="Occurrences" />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex items-center justify-center h-[300px] bg-gray-50 rounded-lg">
+              <p className="text-sm text-gray-500">Failure data will appear after validations are tracked</p>
+            </div>
+          )}
         </div>
       </div>
 
@@ -366,22 +384,28 @@ export default function AnalyticsPage() {
       <div className="mt-8 bg-gradient-to-r from-teal-50 to-blue-50 rounded-lg border border-teal-100 p-6">
         <h3 className="text-lg font-semibold text-gray-800 mb-3">Key Insights</h3>
         <ul className="space-y-2">
-          <li className="flex items-start">
-            <span className="text-teal-600 mr-2">✓</span>
-            <span className="text-gray-700"><strong>Quality Improvement:</strong> Pass rate increased from 85% to 93% over 6 months (+8%)</span>
-          </li>
+          {trendData.length >= 2 && (
+            <li className="flex items-start">
+              <span className="text-teal-600 mr-2">✓</span>
+              <span className="text-gray-700"><strong>Quality Trend:</strong> Avg score moved from {trendData[0].avgScore}% to {trendData[trendData.length - 1].avgScore}% over {trendData.length} months</span>
+            </li>
+          )}
           <li className="flex items-start">
             <span className="text-teal-600 mr-2">✓</span>
             <span className="text-gray-700"><strong>Efficiency Gains:</strong> Saved {totalTimeSaved}+ hours of manual review time</span>
           </li>
-          <li className="flex items-start">
-            <span className="text-teal-600 mr-2">✓</span>
-            <span className="text-gray-700"><strong>Error Reduction:</strong> 34% decrease in validation failures since system launch</span>
-          </li>
-          <li className="flex items-start">
-            <span className="text-teal-600 mr-2">✓</span>
-            <span className="text-gray-700"><strong>Top Issue:</strong> Modal verbs in descriptions account for 28% of failures - training opportunity</span>
-          </li>
+          {errorReduction != null && (
+            <li className="flex items-start">
+              <span className="text-teal-600 mr-2">✓</span>
+              <span className="text-gray-700"><strong>Error Reduction:</strong> {Math.abs(errorReduction)}% {errorReduction <= 0 ? 'decrease' : 'increase'} in avg issues per validation (first vs latest month)</span>
+            </li>
+          )}
+          {topFailures.length > 0 && topFailures[0].count > 0 && (
+            <li className="flex items-start">
+              <span className="text-teal-600 mr-2">✓</span>
+              <span className="text-gray-700"><strong>Top Issue:</strong> {topFailures[0].reason} accounts for {topFailures[0].percentage}% of all failures</span>
+            </li>
+          )}
         </ul>
       </div>
 

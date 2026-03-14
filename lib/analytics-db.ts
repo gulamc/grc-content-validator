@@ -20,10 +20,13 @@ let tokenExpiresAt: number = 0;
 
 export async function getPool(): Promise<sql.ConnectionPool> {
   const now = Date.now();
-
+  
+  // Refresh if token expires within 5 minutes
   if (pool?.connected && now < tokenExpiresAt - 5 * 60 * 1000) {
     return pool;
   }
+
+  // Close stale pool
   if (pool) {
     try { await pool.close(); } catch { /* ignore */ }
     pool = null;
@@ -31,40 +34,37 @@ export async function getPool(): Promise<sql.ConnectionPool> {
 
   const server = process.env.AZURE_SQL_SERVER;
   const database = process.env.AZURE_SQL_DATABASE;
+
   if (!server || !database) {
     throw new Error('Missing AZURE_SQL_SERVER or AZURE_SQL_DATABASE env vars');
   }
 
-  const sqlUser = process.env.AZURE_SQL_USER;
-  let config: sql.config;
+  // Use @azure/identity for Managed Identity token
+  const { DefaultAzureCredential } = await import('@azure/identity');
+  const credential = new DefaultAzureCredential();
+  const tokenResponse = await credential.getToken('https://database.windows.net/.default');
 
-  if (sqlUser) {
-    config = {
-      server,
-      database,
-      user: sqlUser,
-      password: process.env.AZURE_SQL_PASSWORD,
-      options: { encrypt: true, trustServerCertificate: true },
-    };
-  } else {
-    const { DefaultAzureCredential } = await import('@azure/identity');
-    const credential = new DefaultAzureCredential();
-    const tokenResponse = await credential.getToken('https://database.windows.net/.default');
-    tokenExpiresAt = tokenResponse.expiresOnTimestamp;
-    config = {
-      server,
-      database,
-      options: { encrypt: true, trustServerCertificate: false },
-      authentication: {
-        type: 'azure-active-directory-access-token' as any,
-        options: { token: tokenResponse.token },
+  // Track when this token expires
+  tokenExpiresAt = tokenResponse.expiresOnTimestamp;
+
+  const config: sql.config = {
+    server,
+    database,
+    options: {
+      encrypt: true,
+      trustServerCertificate: false,
+    },
+    authentication: {
+      type: 'azure-active-directory-access-token' as any,
+      options: {
+        token: tokenResponse.token,
       },
-    };
-  }
+    },
+  };
 
   pool = new sql.ConnectionPool(config);
   await pool.connect();
-  console.log(`[Analytics DB] Connected via ${sqlUser ? 'SQL login (dev)' : 'Managed Identity (prod)'}`);
+  console.log('[Analytics DB] Connected to Azure SQL (token valid until ' + new Date(tokenExpiresAt).toISOString() + ')');
   return pool;
 }
 
@@ -683,6 +683,161 @@ export async function getGrcMetrics(validatorType: 'controls' | 'evidence_tasks'
     avgDurationMs: Math.round(kpi.avg_duration_ms || 0),
     trendData,
   };
+}
+
+// ============================================================
+// Overview metrics (cross-validator)
+// ============================================================
+
+export interface OverviewMetrics {
+  topFailures: Array<{ reason: string; count: number; percentage: number }>;
+  trendData: Array<{ month: string; avgScore: number; passRate: number }>;
+  errorReduction: number | null;  // percentage decrease, e.g. -34
+}
+
+const ALL_ISSUE_LABELS: Record<string, string> = {
+  // Insights
+  'british_spelling': 'British Spellings',
+  'art_shorthand': 'Art. Shorthand',
+  'wrong_article_format': 'Wrong Article Format',
+  'undefined_acronym': 'Undefined Acronyms',
+  'lowercase_law_name': 'Lowercase Law Names',
+  'onetrust_spelling': 'OneTrust Misspelling',
+  'onetrust_pronoun': 'OneTrust Pronoun',
+  'missing_trademark': 'Missing Trademark ™',
+  'curly_apostrophe': 'Curly Apostrophes',
+  'space_before_colon': 'Space Before Colon',
+  'colon_in_heading': 'Colon in Heading',
+  'lowercase_after_colon': 'Lowercase After Colon',
+  'missing_oxford_comma': 'Missing Oxford Comma',
+  'double_spaces': 'Double Spaces',
+  'curly_quotes': 'Curly Quotation Marks',
+  'improper_ellipsis': 'Improper Ellipsis',
+  'space_before_semicolon': 'Space Before Semicolon',
+  'ampersand_in_text': 'Ampersand in Text',
+  'lowercase_title': 'Lowercase Title',
+  'state_abbreviation': 'State Abbreviations',
+  'broken_url': 'Broken/Incomplete URL',
+  'unspelled_number': 'Unspelled Number',
+  'uk_date_format': 'UK Date Format',
+  'numeric_date': 'Numeric Date Format',
+  'missing_leading_zero': 'Missing Leading Zero',
+  'space_before_percent': 'Space Before %',
+  'hyphen_range': 'Hyphen Instead of En-Dash',
+  'heading_title_case': 'Heading Title Case',
+  'missing_title': 'Missing Title',
+  'missing_structure': 'Missing Sections',
+  'missing_conclusion': 'Missing Conclusion',
+  'weak_introduction': 'Weak Introduction',
+  'writing_quality': 'Writing Quality',
+  'long_sentences': 'Long Sentences',
+  'tone_issues': 'Tone Issues',
+  'first_person': 'First Person Usage',
+  'second_person': 'Second Person Usage',
+  'passive_voice': 'Passive Voice',
+  // Controls
+  'ctrl_id_format': 'Control ID Format',
+  'ctrl_name_length': 'Control Name Length',
+  'ctrl_name_clarity': 'Control Name Clarity',
+  'ctrl_name_modal': 'Modal Verbs in Name',
+  'ctrl_name_role': 'Role Ref in Name',
+  'ctrl_desc_tense': 'Description Tense',
+  'ctrl_desc_passive': 'Description Voice',
+  'ctrl_desc_modal': 'Prohibited Verbs in Desc',
+  'ctrl_desc_vague': 'Vague Terms in Desc',
+  'ctrl_desc_vendor': 'Vendor Ref in Desc',
+  'ctrl_desc_has_steps': 'Steps in Description',
+  'ctrl_desc_word_count': 'Description Word Count',
+  'ctrl_guid_preamble': 'Missing Guidance Preamble',
+  'ctrl_guid_steps': 'Guidance Step Count',
+  'ctrl_guid_actionable': 'Guidance Not Actionable',
+  'ctrl_guid_tense': 'Guidance Tense',
+  'ctrl_guid_vendor': 'Vendor Ref in Guidance',
+  'ctrl_guid_role': 'Role Ref in Guidance',
+  'ctrl_guid_jargon': 'Jargon in Guidance',
+  // ETs
+  'et_what_outcome': 'ET What: Not Outcome-Focused',
+  'et_modal_verb': 'ET Modal Verbs',
+  'et_vague_term': 'ET Vague Terms',
+  'et_vendor': 'ET Vendor Reference',
+  'et_role_specific': 'ET Role-Specific',
+  'et_artifact': 'ET Missing Artifact',
+  'et_timeframe': 'ET Missing Timeframe',
+  'et_cohesion': 'ET Cohesion Issue',
+  'et_clarity': 'ET Clarity Issue',
+};
+
+export async function getOverviewMetrics(): Promise<OverviewMetrics> {
+  const db = await getPool();
+
+  // 1. Top 5 failures across ALL validators
+  const failuresResult = await db.request().query(`
+    SELECT TOP 5
+      issue_type,
+      COUNT(*) AS total_issues
+    FROM ValidationFailures
+    WHERE issue_type IS NOT NULL
+      AND issue_type != 'other'
+      AND issue_type != 'ctrl_other'
+      AND issue_type != 'et_other'
+    GROUP BY issue_type
+    ORDER BY total_issues DESC
+  `);
+
+  const totalIssues = failuresResult.recordset.reduce((sum: number, r: any) => sum + r.total_issues, 0);
+  const topFailures = failuresResult.recordset.map((r: any) => ({
+    reason: ALL_ISSUE_LABELS[r.issue_type] || r.issue_type,
+    count: r.total_issues,
+    percentage: totalIssues > 0 ? Math.round((r.total_issues / totalIssues) * 100) : 0,
+  }));
+
+  // 2. Monthly trend across ALL validators (last 6 months)
+  const trendResult = await db.request().query(`
+    SELECT 
+      FORMAT(created_at, 'yyyy-MM') AS month_key,
+      FORMAT(created_at, 'MMM') AS month_label,
+      AVG(CASE WHEN max_score > 0 THEN (overall_score / CAST(max_score AS FLOAT)) * 100 ELSE 0 END) AS avg_score,
+      AVG(CASE WHEN passed = 1 THEN 100.0 ELSE 0 END) AS pass_rate
+    FROM ValidationRuns
+    WHERE created_at >= DATEADD(month, -6, GETUTCDATE())
+    GROUP BY FORMAT(created_at, 'yyyy-MM'), FORMAT(created_at, 'MMM')
+    ORDER BY month_key
+  `);
+
+  const trendData = trendResult.recordset.map((r: any) => ({
+    month: r.month_label,
+    avgScore: Math.round((r.avg_score || 0) * 10) / 10,
+    passRate: Math.round(r.pass_rate || 0),
+  }));
+
+  // 3. Error reduction: avg issues in earliest month vs latest month
+  let errorReduction: number | null = null;
+  if (trendResult.recordset.length >= 2) {
+    const firstMonth = trendResult.recordset[0].month_key;
+    const lastMonth = trendResult.recordset[trendResult.recordset.length - 1].month_key;
+
+    const errorResult = await db.request()
+      .input('first_month', sql.VarChar, firstMonth)
+      .input('last_month', sql.VarChar, lastMonth)
+      .query(`
+        SELECT 
+          FORMAT(vr.created_at, 'yyyy-MM') AS month_key,
+          AVG(CAST(vr.dimensions_with_issues AS FLOAT)) AS avg_issues
+        FROM ValidationRuns vr
+        WHERE FORMAT(vr.created_at, 'yyyy-MM') IN (@first_month, @last_month)
+        GROUP BY FORMAT(vr.created_at, 'yyyy-MM')
+      `);
+
+    if (errorResult.recordset.length === 2) {
+      const first = errorResult.recordset.find((r: any) => r.month_key === firstMonth);
+      const last = errorResult.recordset.find((r: any) => r.month_key === lastMonth);
+      if (first && last && first.avg_issues > 0) {
+        errorReduction = Math.round(((last.avg_issues - first.avg_issues) / first.avg_issues) * 100);
+      }
+    }
+  }
+
+  return { topFailures, trendData, errorReduction };
 }
 
 // ============================================================
