@@ -487,8 +487,10 @@ const CATEGORY_COLORS: Record<string, string> = {
   'Structure': 'bg-teal-500',
 };
 
-export async function getInsightsMetrics(): Promise<InsightsMetrics> {
+export async function getInsightsMetrics(days?: number): Promise<InsightsMetrics> {
   const db = await getPool();
+  const dateFilter = days ? `AND vr.created_at >= DATEADD(day, -${days}, GETUTCDATE())` : '';
+  const dateFilterShort = days ? `AND created_at >= DATEADD(day, -${days}, GETUTCDATE())` : '';
 
   // 1. KPI cards
   const kpiResult = await db.request().query(`
@@ -499,6 +501,7 @@ export async function getInsightsMetrics(): Promise<InsightsMetrics> {
       SUM(CASE WHEN passed = 1 THEN 1 ELSE 0 END) AS total_passed
     FROM ValidationRuns vr
     WHERE vr.validator_type = 'insights'
+    ${dateFilter}
   `);
 
   const kpi = kpiResult.recordset[0];
@@ -512,6 +515,7 @@ export async function getInsightsMetrics(): Promise<InsightsMetrics> {
     FROM ValidationFailures vf
     JOIN ValidationRuns vr ON vf.validation_run_id = vr.id
     WHERE vr.validator_type = 'insights'
+    ${dateFilter}
     GROUP BY category
     ORDER BY avg_pct DESC
   `);
@@ -535,6 +539,7 @@ export async function getInsightsMetrics(): Promise<InsightsMetrics> {
     WHERE vr.validator_type = 'insights'
       AND vf.issue_type IS NOT NULL
       AND vf.issue_type != 'other'
+      ${dateFilter}
     GROUP BY issue_type
     ORDER BY total_issues DESC
   `);
@@ -588,7 +593,7 @@ export async function getInsightsMetrics(): Promise<InsightsMetrics> {
     percentage: totalIssues > 0 ? Math.round((r.total_issues / totalIssues) * 100) : 0,
   }));
 
-  // 4. Monthly trend (last 6 months)
+  // 4. Monthly trend
   const trendResult = await db.request().query(`
     SELECT 
       FORMAT(vr.created_at, 'yyyy-MM') AS month_key,
@@ -597,7 +602,7 @@ export async function getInsightsMetrics(): Promise<InsightsMetrics> {
       SUM(CASE WHEN vr.passed = 1 THEN 1.0 ELSE 0.0 END) / COUNT(*) * 100 AS pass_rate
     FROM ValidationRuns vr
     WHERE vr.validator_type = 'insights'
-      AND vr.created_at >= DATEADD(month, -6, GETUTCDATE())
+      ${dateFilter}
     GROUP BY FORMAT(vr.created_at, 'yyyy-MM'), FORMAT(vr.created_at, 'MMM')
     ORDER BY month_key
   `);
@@ -633,8 +638,9 @@ export interface GrcMetrics {
   trendData: Array<{ month: string; avgScore: number }>;
 }
 
-export async function getGrcMetrics(validatorType: 'controls' | 'evidence_tasks'): Promise<GrcMetrics> {
+export async function getGrcMetrics(validatorType: 'controls' | 'evidence_tasks', days?: number): Promise<GrcMetrics> {
   const db = await getPool();
+  const dateFilter = days ? `AND created_at >= DATEADD(day, -${days}, GETUTCDATE())` : '';
 
   // KPIs — use SUM(word_count) for total items across all batches
   const kpiResult = await db.request()
@@ -647,6 +653,7 @@ export async function getGrcMetrics(validatorType: 'controls' | 'evidence_tasks'
         AVG(duration_ms) AS avg_duration_ms
       FROM ValidationRuns
       WHERE validator_type = @vtype
+      ${dateFilter}
     `);
 
   const kpi = kpiResult.recordset[0];
@@ -665,7 +672,7 @@ export async function getGrcMetrics(validatorType: 'controls' | 'evidence_tasks'
         AVG(overall_score) AS avg_score
       FROM ValidationRuns
       WHERE validator_type = @vtype
-        AND created_at >= DATEADD(month, -6, GETUTCDATE())
+        ${dateFilter}
       GROUP BY FORMAT(created_at, 'yyyy-MM'), FORMAT(created_at, 'MMM')
       ORDER BY month_key
     `);
@@ -691,8 +698,8 @@ export async function getGrcMetrics(validatorType: 'controls' | 'evidence_tasks'
 
 export interface OverviewMetrics {
   topFailures: Array<{ reason: string; count: number; percentage: number }>;
-  trendData: Array<{ month: string; avgScore: number; passRate: number }>;
-  errorReduction: number | null;  // percentage decrease, e.g. -34
+  trendData: Array<{ week: string; avgScore: number; avgIssues: number; count: number }>;
+  errorReduction: number | null;  // percentage decrease, e.g. -19
 }
 
 const ALL_ISSUE_LABELS: Record<string, string> = {
@@ -767,20 +774,24 @@ const ALL_ISSUE_LABELS: Record<string, string> = {
   'et_clarity': 'ET Clarity Issue',
 };
 
-export async function getOverviewMetrics(): Promise<OverviewMetrics> {
+export async function getOverviewMetrics(days?: number): Promise<OverviewMetrics> {
   const db = await getPool();
+  const dateFilter = days ? `AND created_at >= DATEADD(day, -${days}, GETUTCDATE())` : '';
+  const dateFilterJoin = days ? `AND vr.created_at >= DATEADD(day, -${days}, GETUTCDATE())` : '';
 
   // 1. Top 5 failures across ALL validators
   const failuresResult = await db.request().query(`
     SELECT TOP 5
-      issue_type,
+      vf.issue_type,
       COUNT(*) AS total_issues
-    FROM ValidationFailures
-    WHERE issue_type IS NOT NULL
-      AND issue_type != 'other'
-      AND issue_type != 'ctrl_other'
-      AND issue_type != 'et_other'
-    GROUP BY issue_type
+    FROM ValidationFailures vf
+    JOIN ValidationRuns vr ON vf.validation_run_id = vr.id
+    WHERE vf.issue_type IS NOT NULL
+      AND vf.issue_type != 'other'
+      AND vf.issue_type != 'ctrl_other'
+      AND vf.issue_type != 'et_other'
+      ${dateFilterJoin}
+    GROUP BY vf.issue_type
     ORDER BY total_issues DESC
   `);
 
@@ -791,49 +802,38 @@ export async function getOverviewMetrics(): Promise<OverviewMetrics> {
     percentage: totalIssues > 0 ? Math.round((r.total_issues / totalIssues) * 100) : 0,
   }));
 
-  // 2. Monthly trend across ALL validators (last 6 months)
+  // 2. Weekly trend across ALL validators — avg score + avg issues per article
   const trendResult = await db.request().query(`
     SELECT 
-      FORMAT(created_at, 'yyyy-MM') AS month_key,
-      FORMAT(created_at, 'MMM') AS month_label,
+      DATEADD(day, -DATEPART(weekday, created_at) + 2, CAST(created_at AS date)) AS week_start,
       AVG(CASE WHEN max_score > 0 THEN (overall_score / CAST(max_score AS FLOAT)) * 100 ELSE 0 END) AS avg_score,
-      AVG(CASE WHEN passed = 1 THEN 100.0 ELSE 0 END) AS pass_rate
+      AVG(CAST(dimensions_with_issues AS FLOAT)) AS avg_issues,
+      COUNT(*) AS validation_count
     FROM ValidationRuns
-    WHERE created_at >= DATEADD(month, -6, GETUTCDATE())
-    GROUP BY FORMAT(created_at, 'yyyy-MM'), FORMAT(created_at, 'MMM')
-    ORDER BY month_key
+    WHERE 1=1
+      ${dateFilter}
+    GROUP BY DATEADD(day, -DATEPART(weekday, created_at) + 2, CAST(created_at AS date))
+    ORDER BY week_start
   `);
 
-  const trendData = trendResult.recordset.map((r: any) => ({
-    month: r.month_label,
-    avgScore: Math.round((r.avg_score || 0) * 10) / 10,
-    passRate: Math.round(r.pass_rate || 0),
-  }));
+  const trendData = trendResult.recordset.map((r: any) => {
+    const d = new Date(r.week_start);
+    const label = `${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+    return {
+      week: label,
+      avgScore: Math.round((r.avg_score || 0) * 10) / 10,
+      avgIssues: Math.round((r.avg_issues || 0) * 10) / 10,
+      count: r.validation_count,
+    };
+  });
 
-  // 3. Error reduction: avg issues in earliest month vs latest month
+  // 3. Error reduction: avg issues in first week vs latest week
   let errorReduction: number | null = null;
-  if (trendResult.recordset.length >= 2) {
-    const firstMonth = trendResult.recordset[0].month_key;
-    const lastMonth = trendResult.recordset[trendResult.recordset.length - 1].month_key;
-
-    const errorResult = await db.request()
-      .input('first_month', sql.VarChar, firstMonth)
-      .input('last_month', sql.VarChar, lastMonth)
-      .query(`
-        SELECT 
-          FORMAT(vr.created_at, 'yyyy-MM') AS month_key,
-          AVG(CAST(vr.dimensions_with_issues AS FLOAT)) AS avg_issues
-        FROM ValidationRuns vr
-        WHERE FORMAT(vr.created_at, 'yyyy-MM') IN (@first_month, @last_month)
-        GROUP BY FORMAT(vr.created_at, 'yyyy-MM')
-      `);
-
-    if (errorResult.recordset.length === 2) {
-      const first = errorResult.recordset.find((r: any) => r.month_key === firstMonth);
-      const last = errorResult.recordset.find((r: any) => r.month_key === lastMonth);
-      if (first && last && first.avg_issues > 0) {
-        errorReduction = Math.round(((last.avg_issues - first.avg_issues) / first.avg_issues) * 100);
-      }
+  if (trendData.length >= 2) {
+    const firstWeek = trendData[0];
+    const lastWeek = trendData[trendData.length - 1];
+    if (firstWeek.avgIssues > 0) {
+      errorReduction = Math.round(((lastWeek.avgIssues - firstWeek.avgIssues) / firstWeek.avgIssues) * 100);
     }
   }
 

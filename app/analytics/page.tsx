@@ -54,9 +54,17 @@ interface GrcMetrics {
 
 interface OverviewMetrics {
   topFailures: Array<{ reason: string; count: number; percentage: number }>;
-  trendData: Array<{ month: string; avgScore: number; passRate: number }>;
+  trendData: Array<{ week: string; avgScore: number; avgIssues: number; count: number }>;
   errorReduction: number | null;
 }
+
+const PERIOD_OPTIONS = [
+  { label: 'Last 30 days', value: 30 },
+  { label: 'Last 3 months', value: 90 },
+  { label: 'Last 6 months', value: 180 },
+  { label: 'Last year', value: 365 },
+  { label: 'All time', value: 0 },
+];
 
 // ============================================================
 // Component
@@ -69,11 +77,14 @@ export default function AnalyticsPage() {
   const [overview, setOverview] = useState<OverviewMetrics | null>(null);
   const [isLive, setIsLive] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [days, setDays] = useState<number>(90);
 
   useEffect(() => {
     async function fetchMetrics() {
+      setLoading(true);
       try {
-        const res = await fetch('/api/analytics');
+        const params = days > 0 ? `?days=${days}` : '';
+        const res = await fetch(`/api/analytics${params}`);
         const json = await res.json();
         if (json.success && json.source === 'live') {
           setInsights(json.data);
@@ -89,7 +100,7 @@ export default function AnalyticsPage() {
       }
     }
     fetchMetrics();
-  }, []);
+  }, [days]);
 
   // Build combined stats: live Controls/ET + live Insights + mock remainder
   const insightsRow = {
@@ -149,6 +160,8 @@ export default function AnalyticsPage() {
 
   const errorReduction = overview?.errorReduction;
 
+  const selectedPeriod = PERIOD_OPTIONS.find(p => p.value === days)?.label || 'Last 3 months';
+
   return (
     <div className="min-h-screen bg-gray-50 p-8">
       {/* Warning banner — only show when using mock data */}
@@ -188,11 +201,20 @@ export default function AnalyticsPage() {
       )}
 
       {/* Header */}
-      <div className="mb-8">
-        <h2 className="text-3xl font-bold text-gray-800">Content Validation Analytics</h2>
-        <p className="text-gray-600 mt-2">
-          Executive Dashboard - Last 6 Months
-        </p>
+      <div className="mb-8 flex items-center justify-between">
+        <div>
+          <h2 className="text-3xl font-bold text-gray-800">Content Validation Analytics</h2>
+          <p className="text-gray-600 mt-2">Executive Dashboard</p>
+        </div>
+        <select
+          value={days}
+          onChange={(e) => setDays(Number(e.target.value))}
+          className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 shadow-sm hover:border-gray-400 focus:outline-none focus:ring-2 focus:ring-teal-500"
+        >
+          {PERIOD_OPTIONS.map(opt => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
       </div>
 
       {/* KPI Cards */}
@@ -237,61 +259,91 @@ export default function AnalyticsPage() {
               <AlertTriangle className="w-5 h-5 text-purple-600" />
             </div>
           </div>
-          <div className="text-3xl font-bold text-gray-900">{errorReduction != null ? `${errorReduction}%` : '—'}</div>
-          <p className="text-sm text-purple-600 mt-1">{errorReduction != null ? 'Avg issues: first vs latest month' : 'Needs 2+ months of data'}</p>
+          <div className="text-3xl font-bold text-gray-900">{errorReduction != null ? (errorReduction <= 0 ? `↓ ${Math.abs(errorReduction)}%` : `↑ ${errorReduction}%`) : '—'}</div>
+          <p className="text-sm text-purple-600 mt-1">{errorReduction != null ? (errorReduction <= 0 ? 'Fewer issues per validation' : 'More issues per validation') : 'Needs 2+ weeks of data'}</p>
         </div>
       </div>
 
       {/* Charts Section */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-        {/* Quality Trend Chart */}
+        {/* Weekly Accuracy & Efficiency Trend — Brian's request */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <h3 className="text-lg font-semibold text-gray-800 mb-4">Quality Improvement Trend</h3>
+          <h3 className="text-lg font-semibold text-gray-800 mb-1">Accuracy &amp; Efficiency Over Time</h3>
+          <p className="text-xs text-gray-500 mb-4">Weekly averages across all validators</p>
           {trendData.length > 1 ? (
             <>
               <ResponsiveContainer width="100%" height={300}>
                 <LineChart data={trendData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis dataKey="month" stroke="#6b7280" />
-                  <YAxis stroke="#6b7280" domain={[0, 100]} />
+                  <XAxis dataKey="week" stroke="#6b7280" tick={{ fontSize: 11 }} />
+                  <YAxis 
+                    yAxisId="score" 
+                    stroke="#14b8a6" 
+                    domain={[0, 100]} 
+                    label={{ value: 'Avg Score %', angle: -90, position: 'insideLeft', style: { fontSize: 11, fill: '#14b8a6' } }}
+                  />
+                  <YAxis 
+                    yAxisId="issues" 
+                    orientation="right" 
+                    stroke="#f97316" 
+                    label={{ value: 'Avg Issues', angle: 90, position: 'insideRight', style: { fontSize: 11, fill: '#f97316' } }}
+                  />
                   <Tooltip 
                     contentStyle={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px' }}
+                    formatter={(value: number, name: string) => {
+                      if (name === 'Avg Quality Score') return [`${value}%`, name];
+                      return [value, name];
+                    }}
                   />
                   <Legend />
                   <Line 
+                    yAxisId="score"
                     type="monotone" 
-                    dataKey="passRate" 
+                    dataKey="avgScore" 
                     stroke="#14b8a6" 
                     strokeWidth={3}
-                    name="Pass Rate (%)"
+                    name="Avg Quality Score"
                     dot={{ fill: '#14b8a6', r: 5 }}
                   />
                   <Line 
+                    yAxisId="issues"
                     type="monotone" 
-                    dataKey="avgScore" 
-                    stroke="#3b82f6" 
+                    dataKey="avgIssues" 
+                    stroke="#f97316" 
                     strokeWidth={3}
-                    name="Avg Score"
-                    dot={{ fill: '#3b82f6', r: 5 }}
+                    name="Avg Issues per Validation"
+                    dot={{ fill: '#f97316', r: 5 }}
                   />
                 </LineChart>
               </ResponsiveContainer>
-              {trendData.length >= 2 && (
-                <p className="text-sm text-gray-600 mt-4">
-                  Avg score: {trendData[0].avgScore}% → {trendData[trendData.length - 1].avgScore}% over {trendData.length} months
-                </p>
-              )}
+              {trendData.length >= 2 && (() => {
+                const first = trendData[0].avgScore;
+                const last = trendData[trendData.length - 1].avgScore;
+                const improvement = Math.round((last - first) * 10) / 10;
+                const isPositive = improvement > 0;
+                return (
+                  <div className="mt-4 p-3 bg-gray-50 rounded-lg flex items-center justify-between">
+                    <span className={`text-sm font-semibold ${isPositive ? 'text-green-700' : 'text-red-700'}`}>
+                      Quality improved {isPositive ? '+' : ''}{improvement}% ({first}% → {last}%) over {trendData.length} weeks
+                    </span>
+                    <span className="text-xs text-gray-500">
+                      Issues: {trendData[0].avgIssues} → {trendData[trendData.length - 1].avgIssues} avg per validation
+                    </span>
+                  </div>
+                );
+              })()}
             </>
           ) : (
             <div className="flex items-center justify-center h-[300px] bg-gray-50 rounded-lg">
-              <p className="text-sm text-gray-500">Trend chart will appear after 2+ months of validation data</p>
+              <p className="text-sm text-gray-500">Trend chart will appear after 2+ weeks of validation data</p>
             </div>
           )}
         </div>
 
         {/* Top Failure Reasons */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <h3 className="text-lg font-semibold text-gray-800 mb-4">Top 5 Failure Reasons</h3>
+          <h3 className="text-lg font-semibold text-gray-800 mb-1">Top 5 Failure Reasons</h3>
+          <p className="text-xs text-gray-500 mb-4">{selectedPeriod}</p>
           {topFailures.length > 0 && topFailures[0].count > 0 ? (
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={topFailures} layout="vertical">
@@ -387,7 +439,7 @@ export default function AnalyticsPage() {
           {trendData.length >= 2 && (
             <li className="flex items-start">
               <span className="text-teal-600 mr-2">✓</span>
-              <span className="text-gray-700"><strong>Quality Trend:</strong> Avg score moved from {trendData[0].avgScore}% to {trendData[trendData.length - 1].avgScore}% over {trendData.length} months</span>
+              <span className="text-gray-700"><strong>Quality Trend:</strong> Avg score moved from {trendData[0].avgScore}% to {trendData[trendData.length - 1].avgScore}% over {trendData.length} weeks</span>
             </li>
           )}
           <li className="flex items-start">
@@ -397,7 +449,13 @@ export default function AnalyticsPage() {
           {errorReduction != null && (
             <li className="flex items-start">
               <span className="text-teal-600 mr-2">✓</span>
-              <span className="text-gray-700"><strong>Error Reduction:</strong> {Math.abs(errorReduction)}% {errorReduction <= 0 ? 'decrease' : 'increase'} in avg issues per validation (first vs latest month)</span>
+              <span className="text-gray-700"><strong>Error Reduction:</strong> {Math.abs(errorReduction)}% {errorReduction <= 0 ? 'fewer' : 'more'} issues per validation compared to first week</span>
+            </li>
+          )}
+          {trendData.length >= 2 && (
+            <li className="flex items-start">
+              <span className="text-teal-600 mr-2">✓</span>
+              <span className="text-gray-700"><strong>Efficiency Trend:</strong> Avg issues per article went from {trendData[0].avgIssues} to {trendData[trendData.length - 1].avgIssues} per validation</span>
             </li>
           )}
           {topFailures.length > 0 && topFailures[0].count > 0 && (
