@@ -699,7 +699,15 @@ export async function getGrcMetrics(validatorType: 'controls' | 'evidence_tasks'
 export interface OverviewMetrics {
   topFailures: Array<{ reason: string; count: number; percentage: number }>;
   trendData: Array<{ week: string; avgScore: number; avgIssues: number; count: number }>;
-  errorReduction: number | null;  // percentage decrease, e.g. -19
+  errorReduction: number | null;
+  qualityImprovement: number | null;
+  comparison: {
+    prevAvgScore: number;
+    currAvgScore: number;
+    prevAvgIssues: number;
+    currAvgIssues: number;
+    periodLabel: string;  // e.g. "first 15 days vs last 15 days"
+  } | null;
 }
 
 const ALL_ISSUE_LABELS: Record<string, string> = {
@@ -827,17 +835,57 @@ export async function getOverviewMetrics(days?: number): Promise<OverviewMetrics
     };
   });
 
-  // 3. Error reduction: avg issues in first week vs latest week
+  // 3. Quality improvement & error reduction: first half vs second half of selected period
   let errorReduction: number | null = null;
-  if (trendData.length >= 2) {
-    const firstWeek = trendData[0];
-    const lastWeek = trendData[trendData.length - 1];
-    if (firstWeek.avgIssues > 0) {
-      errorReduction = Math.round(((lastWeek.avgIssues - firstWeek.avgIssues) / firstWeek.avgIssues) * 100);
+  let qualityImprovement: number | null = null;
+  let comparison: OverviewMetrics['comparison'] = null;
+
+  const halfDays = days ? Math.floor(days / 2) : null;
+
+  const comparisonResult = await db.request().query(`
+    SELECT 
+      CASE 
+        WHEN created_at >= DATEADD(day, -${halfDays || 9999}, GETUTCDATE()) THEN 'second_half'
+        ELSE 'first_half'
+      END AS period,
+      AVG(CASE WHEN max_score > 0 THEN (overall_score / CAST(max_score AS FLOAT)) * 100 ELSE 0 END) AS avg_score,
+      AVG(CAST(dimensions_with_issues AS FLOAT)) AS avg_issues
+    FROM ValidationRuns
+    WHERE 1=1
+      ${dateFilter}
+    GROUP BY 
+      CASE 
+        WHEN created_at >= DATEADD(day, -${halfDays || 9999}, GETUTCDATE()) THEN 'second_half'
+        ELSE 'first_half'
+      END
+  `);
+
+  const firstHalf = comparisonResult.recordset.find((r: any) => r.period === 'first_half');
+  const secondHalf = comparisonResult.recordset.find((r: any) => r.period === 'second_half');
+
+  if (firstHalf && secondHalf) {
+    const prevScore = Math.round((firstHalf.avg_score || 0) * 10) / 10;
+    const currScore = Math.round((secondHalf.avg_score || 0) * 10) / 10;
+    const prevIssues = Math.round((firstHalf.avg_issues || 0) * 10) / 10;
+    const currIssues = Math.round((secondHalf.avg_issues || 0) * 10) / 10;
+
+    qualityImprovement = Math.round((currScore - prevScore) * 10) / 10;
+
+    if (prevIssues > 0) {
+      errorReduction = Math.round(((currIssues - prevIssues) / prevIssues) * 100);
     }
+
+    // Build human-readable label
+    let periodLabel: string;
+    if (!days || days >= 365) periodLabel = 'first half vs second half of year';
+    else if (days >= 180) periodLabel = 'first 3 months vs last 3 months';
+    else if (days >= 90) periodLabel = 'first 6 weeks vs last 6 weeks';
+    else periodLabel = `first ${halfDays} days vs last ${halfDays} days`;
+
+    comparison = { prevAvgScore: prevScore, currAvgScore: currScore, prevAvgIssues: prevIssues, currAvgIssues: currIssues, periodLabel };
   }
 
-  return { topFailures, trendData, errorReduction };
+  return { topFailures, trendData, errorReduction, qualityImprovement, comparison };
 }
 
 // ============================================================

@@ -56,6 +56,14 @@ interface OverviewMetrics {
   topFailures: Array<{ reason: string; count: number; percentage: number }>;
   trendData: Array<{ week: string; avgScore: number; avgIssues: number; count: number }>;
   errorReduction: number | null;
+  qualityImprovement: number | null;
+  comparison: {
+    prevAvgScore: number;
+    currAvgScore: number;
+    prevAvgIssues: number;
+    currAvgIssues: number;
+    periodLabel: string;
+  } | null;
 }
 
 const PERIOD_OPTIONS = [
@@ -77,7 +85,7 @@ export default function AnalyticsPage() {
   const [overview, setOverview] = useState<OverviewMetrics | null>(null);
   const [isLive, setIsLive] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [days, setDays] = useState<number>(90);
+  const [days, setDays] = useState<number>(30);
 
   useEffect(() => {
     async function fetchMetrics() {
@@ -159,6 +167,8 @@ export default function AnalyticsPage() {
     : [];
 
   const errorReduction = overview?.errorReduction;
+  const qualityImprovement = overview?.qualityImprovement;
+  const comparison = overview?.comparison;
 
   const selectedPeriod = PERIOD_OPTIONS.find(p => p.value === days)?.label || 'Last 3 months';
 
@@ -260,7 +270,7 @@ export default function AnalyticsPage() {
             </div>
           </div>
           <div className="text-3xl font-bold text-gray-900">{errorReduction != null ? (errorReduction <= 0 ? `↓ ${Math.abs(errorReduction)}%` : `↑ ${errorReduction}%`) : '—'}</div>
-          <p className="text-sm text-purple-600 mt-1">{errorReduction != null ? (errorReduction <= 0 ? 'Fewer issues per validation' : 'More issues per validation') : 'Needs 2+ weeks of data'}</p>
+          <p className="text-sm text-purple-600 mt-1">{comparison ? comparison.periodLabel : 'Needs more data'}</p>
         </div>
       </div>
 
@@ -316,22 +326,16 @@ export default function AnalyticsPage() {
                   />
                 </LineChart>
               </ResponsiveContainer>
-              {trendData.length >= 2 && (() => {
-                const first = trendData[0].avgScore;
-                const last = trendData[trendData.length - 1].avgScore;
-                const improvement = Math.round((last - first) * 10) / 10;
-                const isPositive = improvement > 0;
-                return (
-                  <div className="mt-4 p-3 bg-gray-50 rounded-lg flex items-center justify-between">
-                    <span className={`text-sm font-semibold ${isPositive ? 'text-green-700' : 'text-red-700'}`}>
-                      Quality improved {isPositive ? '+' : ''}{improvement}% ({first}% → {last}%) over {trendData.length} weeks
-                    </span>
-                    <span className="text-xs text-gray-500">
-                      Issues: {trendData[0].avgIssues} → {trendData[trendData.length - 1].avgIssues} avg per validation
-                    </span>
-                  </div>
-                );
-              })()}
+              {comparison && (
+                <div className="mt-4 p-3 bg-gray-50 rounded-lg flex items-center justify-between">
+                  <span className={`text-sm font-semibold ${(qualityImprovement || 0) >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                    Quality {(qualityImprovement || 0) >= 0 ? 'improved' : 'declined'} {(qualityImprovement || 0) >= 0 ? '+' : ''}{qualityImprovement}% ({comparison.prevAvgScore}% → {comparison.currAvgScore}%)
+                  </span>
+                  <span className="text-xs text-gray-500">
+                    {comparison.periodLabel}
+                  </span>
+                </div>
+              )}
             </>
           ) : (
             <div className="flex items-center justify-center h-[300px] bg-gray-50 rounded-lg">
@@ -436,26 +440,20 @@ export default function AnalyticsPage() {
       <div className="mt-8 bg-gradient-to-r from-teal-50 to-blue-50 rounded-lg border border-teal-100 p-6">
         <h3 className="text-lg font-semibold text-gray-800 mb-3">Key Insights</h3>
         <ul className="space-y-2">
-          {trendData.length >= 2 && (
+          {comparison && (
             <li className="flex items-start">
               <span className="text-teal-600 mr-2">✓</span>
-              <span className="text-gray-700"><strong>Quality Trend:</strong> Avg score moved from {trendData[0].avgScore}% to {trendData[trendData.length - 1].avgScore}% over {trendData.length} weeks</span>
+              <span className="text-gray-700"><strong>Quality Improvement:</strong> Avg score moved from {comparison.prevAvgScore}% to {comparison.currAvgScore}% ({(qualityImprovement || 0) >= 0 ? '+' : ''}{qualityImprovement}%) — {comparison.periodLabel}</span>
             </li>
           )}
           <li className="flex items-start">
             <span className="text-teal-600 mr-2">✓</span>
             <span className="text-gray-700"><strong>Efficiency Gains:</strong> Saved {totalTimeSaved}+ hours of manual review time</span>
           </li>
-          {errorReduction != null && (
+          {comparison && errorReduction != null && (
             <li className="flex items-start">
               <span className="text-teal-600 mr-2">✓</span>
-              <span className="text-gray-700"><strong>Error Reduction:</strong> {Math.abs(errorReduction)}% {errorReduction <= 0 ? 'fewer' : 'more'} issues per validation compared to first week</span>
-            </li>
-          )}
-          {trendData.length >= 2 && (
-            <li className="flex items-start">
-              <span className="text-teal-600 mr-2">✓</span>
-              <span className="text-gray-700"><strong>Efficiency Trend:</strong> Avg issues per article went from {trendData[0].avgIssues} to {trendData[trendData.length - 1].avgIssues} per validation</span>
+              <span className="text-gray-700"><strong>Error Reduction:</strong> Avg issues went from {comparison.prevAvgIssues} to {comparison.currAvgIssues} per validation ({Math.abs(errorReduction)}% {errorReduction <= 0 ? 'fewer' : 'more'})</span>
             </li>
           )}
           {topFailures.length > 0 && topFailures[0].count > 0 && (
