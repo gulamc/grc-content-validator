@@ -30,7 +30,7 @@ jobs:
           npm run test --if-present
 
       - name: Zip artifact for deployment
-        run: zip -r node-app.zip .next node_modules public package.json package-lock.json next.config.mjs app components lib scorer hooks specs
+        run: zip -r node-app.zip .next public package.json package-lock.json next.config.mjs app components lib scorer hooks specs
       
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
