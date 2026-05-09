@@ -10,7 +10,7 @@ import { getParaLineRef } from '@/scorer/insights-node';
 
 const bold = (t: string) => `<b>${t}</b>`;
 
-const UK_US_SPELLINGS: Record<string, string> = {
+export const UK_US_SPELLINGS: Record<string, string> = {
   // -ise/-ize endings (COMPREHENSIVE)
   '\\b(priorit|util|optim|maxim|minim|standard|recogn|real|author|organ|special|general|central|local|personal|final|legal|moral|neutral|normal|rational|visual|global|formal|ideal|internal|external|hospital|material|capital|categor|summar|emphas|mobilis|publicis|characteris|privatis|modernis|stabilis|synthes|civil|custom|critic|neutral|energ|plural|polar|realis|finalis|civilis|modernis|summaris|recognis|stabil|mobil|social|commercialis|industrialis|nationalis|memoris|criticis|terroris|theoris|philosophis|synchronis)is(e|ed|ing|es|ation|ations)\\b':
     'Use US spelling with -iz- (e.g., prioritizing, utilized, categorize)',

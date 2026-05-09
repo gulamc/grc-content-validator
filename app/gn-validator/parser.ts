@@ -1,0 +1,192 @@
+import JSZip from 'jszip';
+import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
+import type { GNType, GNCell, GNRun, GNQuestion, GNDocument } from './types';
+
+const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+
+// Matches subsection headings like "1.1 ...", "5.2. ...", "17.3. ..."
+const SECTION_HEADING_RE = /^(\d+\.\d+)\.?\s/;
+
+// Matches the row label in cell[0] of each table row.
+const LABEL_RESPONSE = /^response\s*$/i;
+const LABEL_CITATION = /^citation\s*$/i;
+const LABEL_PERSONA  = /^applicable persona\s*$/i;
+
+// Expected row counts per GN type.
+export const ROWS_FOR_TYPE: Record<GNType, number> = {
+  overview: 3,
+  breach: 3,
+  pia: 3,
+  employment: 2,
+  marketing: 1,
+};
+
+/**
+ * Extracts committed text from a DOM node, applying OOXML tracked-changes rules:
+ *   - w:del  → skip entirely (deleted text, not visible after acceptance)
+ *   - w:ins  → recurse (inserted text, accepted as committed)
+ *   - w:t    → include text content
+ *   - all other elements → recurse
+ */
+function extractCommittedText(node: Node): string {
+  let text = '';
+  for (let i = 0; i < node.childNodes.length; i++) {
+    const child = node.childNodes[i] as Element;
+    if (child.localName === 'del') continue;
+    if (child.localName === 't') {
+      text += child.textContent ?? '';
+    } else if (child.childNodes?.length) {
+      text += extractCommittedText(child);
+    }
+  }
+  return text;
+}
+
+function getDirectChildren(node: Node, localName: string): Element[] {
+  const result: Element[] = [];
+  for (let i = 0; i < node.childNodes.length; i++) {
+    const child = node.childNodes[i] as Element;
+    if (child.localName === localName) result.push(child);
+  }
+  return result;
+}
+
+/**
+ * Extracts committed runs from a table cell, preserving italic formatting per run.
+ * Mirrors extractCommittedText's tracked-changes rules:
+ *   - w:del → skip (deleted runs are not in committed document)
+ *   - w:ins → recurse (inserted runs are in committed document)
+ *   - w:r   → collect text from w:t children, check w:rPr/w:i for italic flag
+ */
+function extractCommittedRuns(node: Node): GNRun[] {
+  const runs: GNRun[] = [];
+
+  function walk(n: Node): void {
+    for (let i = 0; i < n.childNodes.length; i++) {
+      const child = n.childNodes[i] as Element;
+      if (!child.localName) continue;
+      if (child.localName === 'del') continue;
+      if (child.localName === 'r') {
+        const rPrList = getDirectChildren(child, 'rPr');
+        const italic = rPrList.length > 0 && getDirectChildren(rPrList[0], 'i').length > 0;
+        let runText = '';
+        for (let j = 0; j < child.childNodes.length; j++) {
+          const rc = child.childNodes[j] as Element;
+          if (rc.localName === 't') runText += rc.textContent ?? '';
+        }
+        if (runText) runs.push({ text: runText, italic });
+      } else if (child.childNodes?.length) {
+        walk(child);
+      }
+    }
+  }
+
+  walk(node);
+  return runs;
+}
+
+function parseCell(tc: Element, serializer: XMLSerializer): GNCell {
+  // Join paragraph texts with \n so multi-paragraph cells preserve boundaries.
+  // Rules like B1 can then correctly detect whether citations are already on
+  // separate lines vs joined on one line (the actual violation).
+  const paras = getDirectChildren(tc, 'p');
+  const text = paras
+    .map(p => extractCommittedText(p).trim())
+    .filter(t => t.length > 0)
+    .join('\n');
+  return {
+    text,
+    rawXml: serializer.serializeToString(tc),
+    runs: extractCommittedRuns(tc),
+  };
+}
+
+/**
+ * Parses a .docx GN file and returns a structured GNDocument.
+ *
+ * Algorithm:
+ *   Walk body nodes. Track the current subsection (matched by SECTION_HEADING_RE).
+ *   The last non-section paragraph before a table is treated as the question text.
+ *   Each table produces one GNQuestion numbered <section>.<sequence>.
+ */
+export async function parseGNDocument(
+  buffer: Buffer,
+  gnType: GNType,
+  jurisdiction: string,
+  fileName: string,
+): Promise<GNDocument> {
+  const zip = await (JSZip as unknown as { loadAsync: (b: Buffer) => Promise<JSZip> }).loadAsync(buffer);
+
+  const documentFile = zip.file('word/document.xml');
+  if (!documentFile) throw new Error('word/document.xml not found in document');
+  const xml = await documentFile.async('string');
+
+  const domParser = new DOMParser();
+  const xmlDoc = domParser.parseFromString(xml, 'text/xml') as unknown as Document;
+  const serializer = new XMLSerializer();
+
+  const bodyElements = xmlDoc.getElementsByTagNameNS(W_NS, 'body');
+  if (!bodyElements.length) throw new Error('No <w:body> found in document.xml');
+  const body = bodyElements[0];
+
+  const questions: GNQuestion[] = [];
+  let currentSection = '';
+  const sectionCounts: Record<string, number> = {};
+  let pendingQuestionText = '';
+
+  for (let i = 0; i < body.childNodes.length; i++) {
+    const node = body.childNodes[i] as Element;
+
+    if (node.localName === 'p') {
+      const text = extractCommittedText(node).trim();
+      if (!text) continue;
+
+      const sectionMatch = text.match(SECTION_HEADING_RE);
+      if (sectionMatch) {
+        currentSection = sectionMatch[1];
+        if (sectionCounts[currentSection] === undefined) sectionCounts[currentSection] = 0;
+        pendingQuestionText = '';
+      } else {
+        pendingQuestionText = text;
+      }
+    } else if (node.localName === 'tbl') {
+      if (!currentSection || !pendingQuestionText) {
+        pendingQuestionText = '';
+        continue;
+      }
+
+      sectionCounts[currentSection] = (sectionCounts[currentSection] ?? 0) + 1;
+      const questionNumber = `${currentSection}.${sectionCounts[currentSection]}`;
+
+      let response: GNCell | undefined;
+      let citation: GNCell | undefined;
+      let persona: GNCell | undefined;
+
+      const rows = getDirectChildren(node, 'tr');
+      for (const row of rows) {
+        const cells = getDirectChildren(row, 'tc');
+        if (cells.length < 2) continue;
+        const label = extractCommittedText(cells[0]).trim();
+        const content = parseCell(cells[1], serializer);
+
+        if (LABEL_RESPONSE.test(label))  response = content;
+        else if (LABEL_CITATION.test(label)) citation = content;
+        else if (LABEL_PERSONA.test(label))  persona  = content;
+      }
+
+      questions.push({
+        number: questionNumber,
+        section: currentSection,
+        questionText: pendingQuestionText,
+        response,
+        citation,
+        persona,
+      });
+
+      pendingQuestionText = '';
+    }
+  }
+
+  // isEU is left false here; the upload form sets it via isEUJurisdiction()
+  return { type: gnType, jurisdiction, isEU: false, fileName, questions, rawBuffer: buffer };
+}

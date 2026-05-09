@@ -5,7 +5,7 @@
 
 import { registerRule } from '@/lib/rule-registry';
 
-registerRule('lists', ({ text }: { text: string; params: Record<string, string> }) => {
+registerRule('lists', ({ text: _text }: { text: string; params: Record<string, string> }) => {
   const issues: string[] = [];
 
   // Simple check for list formatting consistency
