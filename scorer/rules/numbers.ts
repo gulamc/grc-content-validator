@@ -8,6 +8,9 @@ import { getParaLineRef } from '@/scorer/insights-node';
 
 const bold = (t: string) => `<b>${t}</b>`;
 
+const LEGAL_PREFIX_RE =
+  /\b(?:articles?|art|sections?|sec|pages?|chapters?|ch|paragraphs?|para|clauses?|regulations?|reg|recitals?|schedules?|annex(?:es)?|parts?|titles?|bills?|statutes?|acts?|laws?)\b|§{1,2}/i;
+
 registerRule('numbers', ({ text }: { text: string; params: Record<string, string> }) => {
   const issues: string[] = [];
 
@@ -42,8 +45,7 @@ registerRule('numbers', ({ text }: { text: string; params: Record<string, string
     if (charAfter === ')' || charAfter === '.') continue;
     if (charBefore === '(' || charBefore === '[') continue;
 
-    // Skip Article/Section/Page/Chapter references (including abbreviations)
-    if (['article', 'art.', 'art', 'section', 'sec.', 'sec', 'page', 'chapter', 'ch.', 'paragraph', 'clause', 'regulation', 'reg.'].some(kw => context.includes(kw))) continue;
+    if (LEGAL_PREFIX_RE.test(context)) continue;
 
     // Skip numbers before magnitude words (million, billion, thousand, hundred)
     if (/\d\s+(million|billion|thousand|hundred|dozen)/i.test(text.substring(position, position + 20))) continue;

@@ -45,3 +45,9 @@ export * from './trademarks';
 // Structure
 export * from './standard-structure';
 export * from './intro-value-clarity';
+
+// Shared G-rules (GN Phase 1D — also available to Insights via ContentTypeRules)
+export * from './latin-italics';
+export * from './key-concepts';
+export * from './bullet-first-word';
+export * from './section-lowercase';
