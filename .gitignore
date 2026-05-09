@@ -6,3 +6,7 @@ node_modules/
 .DS_Store
 dist/
 build/
+
+# Local dev/test artifacts (not for repo or deployment)
+scripts/
+tsconfig.tsbuildinfo
