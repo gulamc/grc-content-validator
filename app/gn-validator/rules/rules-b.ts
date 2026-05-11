@@ -204,7 +204,7 @@ export async function ruleB2(doc: GNDocument): Promise<GNValidationResult[]> {
 
 // ── B3 ────────────────────────────────────────────────────────────────────────
 
-const LIST_OF_LAWS_QUESTIONS = new Set(['1.1.1', '1.3.1']);
+const LIST_OF_LAWS_QUESTIONS = new Set(['1.1.1']);
 
 // B3 — No Citations in List-of-Laws Questions
 export async function ruleB3(doc: GNDocument): Promise<GNValidationResult[]> {
