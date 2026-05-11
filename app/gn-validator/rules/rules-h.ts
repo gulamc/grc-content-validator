@@ -2,7 +2,7 @@ import type { GNDocument, GNValidationResult } from '../types';
 
 // ── H1 — Authority Names: No "the" in Abbreviation ───────────────────────────
 
-const H1_RE = /\(the\s+[A-Z]{2,}/;
+const H1_RE = /\(the\s+[A-Z]{2,}(?:\s+[A-Z]{2,})*\)/;
 const H1_FIX_RE = /\(the\s+([A-Z]{2,}(?:\s+[A-Z]{2,})*)\)/g;
 
 export function applyH1Fix(text: string): string {
