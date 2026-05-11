@@ -46,12 +46,25 @@ function hasAndJoinedLaws(text: string): boolean {
   return text.split('\n').some(line => /[a-zA-Z)]\s+and\s+[A-Z]/.test(line));
 }
 
-// ". " boundary where what follows starts with a recognised citation prefix.
+// Words that legitimately precede ". §" or ". Section" as part of an abbreviation
+// (e.g. "Conn. Gen. Stat. § 36a-701b"), not as a citation-entry separator.
+const LEGAL_ABBR_BEFORE_PERIOD = new Set([
+  'stat', 'gen', 'code', 'civ', 'laws', 'ch',
+  'rev', 'ann', 'app', 'proc', 'regs', 'reg', 'vol',
+]);
+
+function wordBeforeDot(line: string, dotIndex: number): string {
+  return (line.slice(0, dotIndex).match(/(\w+)$/)?.[1] ?? '').toLowerCase();
+}
+
+// ". " boundary where what follows starts with a recognised citation prefix,
+// and the word immediately before the "." is not a known legal abbreviation.
 function hasPeriodJoinedLaws(text: string): boolean {
   return text.split('\n').some(line => {
     const periodPattern = /\.\s+/g;
     let match;
     while ((match = periodPattern.exec(line)) !== null) {
+      if (LEGAL_ABBR_BEFORE_PERIOD.has(wordBeforeDot(line, match.index))) continue;
       if (startsWithCitationPrefix(line.slice(match.index + match[0].length))) return true;
     }
     return false;
@@ -62,13 +75,15 @@ function hasSectionSpelledOut(text: string): boolean {
   return /\bSections?\s+\d/.test(text);
 }
 
-// Split a single line on ". " boundaries where what follows is a recognised citation start.
+// Split a single line on ". " boundaries where what follows is a recognised citation start,
+// unless the word before "." is a known legal abbreviation (e.g. "Stat", "Gen", "Code").
 function splitPeriodJoinedLine(line: string): string[] {
   const parts: string[] = [];
   let start = 0;
   const periodPattern = /\.\s+/g;
   let match;
   while ((match = periodPattern.exec(line)) !== null) {
+    if (LEGAL_ABBR_BEFORE_PERIOD.has(wordBeforeDot(line, match.index))) continue;
     const after = line.slice(match.index + match[0].length);
     if (startsWithCitationPrefix(after)) {
       parts.push(line.slice(start, match.index + 1)); // keep the period on the left segment
