@@ -6,6 +6,7 @@ import {
   AlertTriangle, Lightbulb, AlertCircle, ChevronDown,
 } from 'lucide-react';
 import { JURISDICTION_GROUPS } from '@/app/gn-validator/utils/jurisdictions';
+import { compareQuestionNumbers } from '@/app/gn-validator/utils/question-sort';
 
 type GNType = 'overview' | 'breach' | 'pia' | 'employment' | 'marketing';
 
@@ -428,7 +429,7 @@ function FindingsGroup({
 
       {expanded && (
         <div className="divide-y divide-slate-100">
-          {findings.map((f, i) => (
+          {[...findings].sort((a, b) => compareQuestionNumbers(a.questionNumber, b.questionNumber)).map((f, i) => (
             <div key={i} className="px-6 py-3 flex items-start gap-3">
               <span className={`text-xs font-mono font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5 ${c.rule}`}>
                 {f.ruleId}
