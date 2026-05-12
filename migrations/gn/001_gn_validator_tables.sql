@@ -188,24 +188,20 @@ INSERT INTO gn_rules VALUES ('G5', 'Decimals and Fractions',
   'Decimals and fractions must follow style guide format.',
   'flag', 1,1,1,1,1, 1, GETDATE());
 
--- is_active=0: G6 delegates to scorer/rules/money.ts stub (always PASS).
--- GN-local implementation required before re-enabling. Deferred post-demo.
 INSERT INTO gn_rules VALUES ('G6', 'Money and Currency',
   'G - Language & Style',
   'Currency code before number; USD conversion in brackets.',
-  'flag', 1,1,1,1,1, 0, GETDATE());
+  'flag', 1,1,1,1,1, 1, GETDATE());
 
 INSERT INTO gn_rules VALUES ('G7', 'Straight Apostrophes and Quotation Marks',
   'G - Language & Style',
   'Curly (smart) apostrophes and quotation marks must be replaced with straight ones.',
   'auto', 1,1,1,1,1, 1, GETDATE());
 
--- is_active=0: G8 delegates to scorer/rules/lists.ts stub (always PASS).
--- GN-local implementation required before re-enabling. Deferred post-demo.
 INSERT INTO gn_rules VALUES ('G8', 'Lists Use Bullets Not Roman Numerals or Numbers',
   'G - Language & Style',
   'General non-sequential lists must use bullet points, not roman numerals or numbered lists.',
-  'flag', 1,1,1,1,1, 0, GETDATE());
+  'flag', 1,1,1,1,1, 1, GETDATE());
 
 INSERT INTO gn_rules VALUES ('G9', 'Latin Words in Italics',
   'G - Language & Style',
