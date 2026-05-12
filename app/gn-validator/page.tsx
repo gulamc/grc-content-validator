@@ -3,7 +3,7 @@
 import { useState, useRef } from 'react';
 import {
   FileText, Upload, Loader2, Download, CheckCircle2,
-  AlertTriangle, Lightbulb, AlertCircle, ChevronDown,
+  AlertTriangle, Lightbulb, AlertCircle, ChevronDown, MapPin,
 } from 'lucide-react';
 import { JURISDICTION_GROUPS } from '@/app/gn-validator/utils/jurisdictions';
 import { compareQuestionNumbers } from '@/app/gn-validator/utils/question-sort';
@@ -45,7 +45,9 @@ interface ValidationResult {
   docxBase64: string;
 }
 
-type PageState = 'idle' | 'validating' | 'results';
+// 'detecting'  — file selected, detection API call in flight
+// 'detected'   — detection complete; show inferred jurisdiction or dropdown
+type PageState = 'idle' | 'detecting' | 'detected' | 'validating' | 'results';
 
 function downloadDocx(base64: string, fileName: string) {
   const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
@@ -60,7 +62,6 @@ function downloadDocx(base64: string, fileName: string) {
 
 export default function GNValidatorPage() {
   const [gnType, setGnType] = useState<GNType | ''>('');
-  const [jurisdiction, setJurisdiction] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [pageState, setPageState] = useState<PageState>('idle');
   const [result, setResult] = useState<ValidationResult | null>(null);
@@ -70,9 +71,45 @@ export default function GNValidatorPage() {
     flag: true,
     'ai-suggestion': true,
   });
+
+  // Jurisdiction inference state
+  const [inferredJurisdiction, setInferredJurisdiction] = useState<string | null>(null);
+  const [inferredConfidence, setInferredConfidence] = useState<'high' | 'medium' | 'low'>('low');
+  const [showOverride, setShowOverride] = useState(false);
+  const [manualJurisdiction, setManualJurisdiction] = useState('');
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const canValidate = !!gnType && jurisdiction.trim().length > 0 && !!file;
+  // High-confidence auto-detected jurisdiction; otherwise the user must pick from dropdown.
+  const effectiveJurisdiction =
+    manualJurisdiction ||
+    (inferredConfidence === 'high' && !showOverride ? inferredJurisdiction ?? '' : '');
+
+  // pageState check kept out of canValidate to avoid TypeScript narrowing issues in the button
+  const canValidate = !!gnType && !!effectiveJurisdiction;
+
+  const handleFileChange = async (selectedFile: File) => {
+    setFile(selectedFile);
+    setManualJurisdiction('');
+    setShowOverride(false);
+    setInferredJurisdiction(null);
+    setInferredConfidence('low');
+    setPageState('detecting');
+
+    try {
+      const fd = new FormData();
+      fd.append('file', selectedFile);
+      const res = await fetch('/api/gn-validator/detect-jurisdiction', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (data.success && data.jurisdiction) {
+        setInferredJurisdiction(data.jurisdiction);
+        setInferredConfidence(data.confidence as 'high' | 'medium' | 'low');
+      }
+    } catch {
+      // Detection failure: leave confidence 'low', user picks from dropdown
+    }
+    setPageState('detected');
+  };
 
   const handleValidate = async () => {
     if (!canValidate) return;
@@ -83,21 +120,21 @@ export default function GNValidatorPage() {
     const formData = new FormData();
     formData.append('file', file!);
     formData.append('gnType', gnType);
-    formData.append('jurisdiction', jurisdiction.trim());
+    formData.append('jurisdiction', effectiveJurisdiction);
 
     try {
       const res = await fetch('/api/gn-validator/validate', { method: 'POST', body: formData });
       const data = await res.json();
       if (!data.success) {
         setError(data.error ?? 'Validation failed.');
-        setPageState('idle');
+        setPageState('detected');
         return;
       }
       setResult(data);
       setPageState('results');
     } catch {
       setError('Network error — could not reach the server.');
-      setPageState('idle');
+      setPageState('detected');
     }
   };
 
@@ -106,6 +143,10 @@ export default function GNValidatorPage() {
     setResult(null);
     setError('');
     setFile(null);
+    setInferredJurisdiction(null);
+    setInferredConfidence('low');
+    setShowOverride(false);
+    setManualJurisdiction('');
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -117,6 +158,9 @@ export default function GNValidatorPage() {
 
   const fieldLabel = (f: string) =>
     f === 'response' ? 'Response' : f === 'citation' ? 'Citation' : f === 'persona' ? 'Persona' : f;
+
+  // Which jurisdiction string to show in the validating/results panels
+  const displayJurisdiction = effectiveJurisdiction || inferredJurisdiction || '';
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100">
@@ -161,28 +205,6 @@ export default function GNValidatorPage() {
                   </select>
                 </div>
 
-                {/* Jurisdiction */}
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                    Jurisdiction <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={jurisdiction}
-                    onChange={e => setJurisdiction(e.target.value)}
-                    disabled={pageState === 'validating'}
-                    className="w-full px-4 py-2.5 border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-slate-50 disabled:text-slate-500"
-                  >
-                    <option value="">Select jurisdiction…</option>
-                    {JURISDICTION_GROUPS.map(group => (
-                      <optgroup key={group.label} label={group.label}>
-                        {group.jurisdictions.map(j => (
-                          <option key={j} value={j}>{j}</option>
-                        ))}
-                      </optgroup>
-                    ))}
-                  </select>
-                </div>
-
                 {/* File upload */}
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1.5">
@@ -215,8 +237,81 @@ export default function GNValidatorPage() {
                     type="file"
                     accept=".docx"
                     className="hidden"
-                    onChange={e => setFile(e.target.files?.[0] ?? null)}
+                    onChange={e => { const f = e.target.files?.[0]; if (f) handleFileChange(f); }}
                   />
+                </div>
+
+                {/* Jurisdiction — inferred or manual */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                    Jurisdiction <span className="text-red-500">*</span>
+                  </label>
+
+                  {pageState === 'idle' && (
+                    <div className="px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-400">
+                      Upload a document above to detect jurisdiction.
+                    </div>
+                  )}
+
+                  {pageState === 'detecting' && (
+                    <div className="flex items-center gap-2 px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-500">
+                      <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                      Detecting jurisdiction…
+                    </div>
+                  )}
+
+                  {(pageState === 'detected' || pageState === 'validating' || pageState === 'results') && (
+                    <>
+                      {inferredConfidence === 'high' && !showOverride ? (
+                        // High confidence — show detected badge with override link
+                        <div className="flex items-center justify-between px-4 py-2.5 bg-emerald-50 border border-emerald-200 rounded-lg">
+                          <div className="flex items-center gap-2">
+                            <MapPin className="w-4 h-4 text-emerald-600 shrink-0" />
+                            <span className="text-sm font-medium text-emerald-800">{inferredJurisdiction}</span>
+                          </div>
+                          <button
+                            onClick={() => setShowOverride(true)}
+                            disabled={pageState === 'validating'}
+                            className="text-xs text-emerald-600 hover:text-emerald-800 underline underline-offset-2 disabled:opacity-50"
+                          >
+                            override
+                          </button>
+                        </div>
+                      ) : (
+                        // Medium/low confidence or override active — show full dropdown
+                        <>
+                          {inferredJurisdiction && inferredConfidence !== 'high' && (
+                            <p className="text-xs text-slate-400 mb-1.5">
+                              Could not detect jurisdiction automatically — please select.
+                            </p>
+                          )}
+                          <select
+                            value={manualJurisdiction}
+                            onChange={e => setManualJurisdiction(e.target.value)}
+                            disabled={pageState === 'validating'}
+                            className="w-full px-4 py-2.5 border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-slate-50 disabled:text-slate-500"
+                          >
+                            <option value="">Select jurisdiction…</option>
+                            {JURISDICTION_GROUPS.map(group => (
+                              <optgroup key={group.label} label={group.label}>
+                                {group.jurisdictions.map(j => (
+                                  <option key={j} value={j}>{j}</option>
+                                ))}
+                              </optgroup>
+                            ))}
+                          </select>
+                          {showOverride && (
+                            <button
+                              onClick={() => { setShowOverride(false); setManualJurisdiction(''); }}
+                              className="mt-1 text-xs text-slate-400 hover:text-slate-600 underline underline-offset-2"
+                            >
+                              cancel — use detected value
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </>
+                  )}
                 </div>
 
                 {/* Error */}
@@ -231,7 +326,7 @@ export default function GNValidatorPage() {
                 <div className="flex gap-3 pt-1">
                   <button
                     onClick={handleValidate}
-                    disabled={!canValidate || pageState === 'validating'}
+                    disabled={!canValidate || pageState !== 'detected'}
                     className="flex-1 flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors shadow"
                   >
                     {pageState === 'validating' ? (
@@ -260,14 +355,14 @@ export default function GNValidatorPage() {
           <div className="lg:col-span-3 space-y-4">
 
             {/* Empty / loading */}
-            {pageState === 'idle' && (
+            {(pageState === 'idle' || pageState === 'detecting' || pageState === 'detected') && !result && (
               <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-12 text-center">
                 <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
                   <FileText className="w-8 h-8 text-slate-400" />
                 </div>
                 <h3 className="text-lg font-semibold text-slate-900 mb-2">Ready to Validate</h3>
                 <p className="text-slate-500 text-sm max-w-sm mx-auto">
-                  Select a GN type and jurisdiction, upload your .docx file, then click Validate.
+                  Select a GN type, upload your .docx file — jurisdiction is detected automatically.
                   The annotated output is available for download once validation completes.
                 </p>
               </div>
@@ -278,7 +373,7 @@ export default function GNValidatorPage() {
                 <Loader2 className="w-12 h-12 text-blue-500 animate-spin mx-auto mb-4" />
                 <h3 className="text-lg font-semibold text-slate-900 mb-2">Validating…</h3>
                 <p className="text-slate-500 text-sm">
-                  Running {gnType && GN_TYPE_LABELS[gnType as GNType]} rules for {jurisdiction}.
+                  Running {gnType && GN_TYPE_LABELS[gnType as GNType]} rules for {displayJurisdiction}.
                   This usually takes 5–15 seconds.
                 </p>
               </div>
@@ -288,8 +383,9 @@ export default function GNValidatorPage() {
               <>
                 {/* Summary card */}
                 <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-6">
+                  {/* min-w-0 on left div allows it to shrink so the Download button never overflows */}
                   <div className="flex items-start justify-between gap-4">
-                    <div>
+                    <div className="min-w-0">
                       <h2 className="text-lg font-semibold text-slate-900">
                         {result.summary.jurisdiction} — {GN_TYPE_LABELS[result.summary.gnType as GNType] ?? result.summary.gnType}
                       </h2>

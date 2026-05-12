@@ -197,8 +197,14 @@ export async function ruleG2(doc: GNDocument): Promise<GNValidationResult[]> {
 
 // ── G3 — Numbers 0-9 Spell Out ───────────────────────────────────────────────
 
+// Q1.2.2 is the supervisory-authority contact-info cell across all GN templates.
+// It contains structured address data (street numbers, ordinals like "7ème") that
+// G3 must not flag — these are not running prose.
+const G3_EXCLUDED_QUESTIONS = new Set(['1.2.2']);
+
 export async function ruleG3(doc: GNDocument): Promise<GNValidationResult[]> {
-  return runScorerRule('numbers', 'G3', doc);
+  const all = await runScorerRule('numbers', 'G3', doc);
+  return all.filter(r => !G3_EXCLUDED_QUESTIONS.has(r.questionNumber));
 }
 
 // ── G4 — Date Format ─────────────────────────────────────────────────────────

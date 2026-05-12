@@ -73,9 +73,19 @@ export function applyMoneyFix(text: string, _params: Record<string, string> = {}
 registerRule('money', ({ text }: { text: string; params: Record<string, string> }) => {
   const issues: string[] = [];
 
+  // Pre-compute (approx. ...) bracket spans so Type 1 can skip symbols inside them.
+  // A bare $ inside "(approx. $120)" is the correct USD-conversion format, not a violation.
+  const APPROX_BRACKET_RE = /\(\s*approx\.?\s[^)]*\)/gi;
+  const approxSpans: Array<[number, number]> = [];
+  for (const m of text.matchAll(APPROX_BRACKET_RE)) {
+    approxSpans.push([m.index!, m.index! + m[0].length]);
+  }
+  const inApproxBracket = (pos: number) => approxSpans.some(([s, e]) => pos >= s && pos < e);
+
   // Type 1: bare currency symbol without ISO code prefix
   for (const match of Array.from(text.matchAll(BARE_SYMBOL_RE))) {
     const pos = match.index ?? 0;
+    if (inApproxBracket(pos)) continue;
     const location = getParaLineRef(text, pos);
     const symbol = match[0][0];
     issues.push(
