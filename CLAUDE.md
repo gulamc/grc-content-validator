@@ -128,12 +128,7 @@ Follow the patterns already established in the existing validator tables. New GN
 
 ---
 
-## Known Disabled Rules (post-demo sprint backlog)
+## Rule Status Notes
 
-### G6 (Money/Currency) — `is_active = 0` in `gn_rules`
-`ruleG6` in `app/gn-validator/rules/rules-g.ts` delegates to `getRule('money')` from the scorer registry. The `scorer/rules/money.ts` implementation is a PASS-always stub kept in parity with the Insights v1 validator. Before re-enabling G6, a GN-local implementation must be written directly in `rules-g.ts` (not via the scorer registry) so it operates independently of Insights.
-
-### G8 (Lists: Bullets Not Roman Numerals) — `is_active = 0` in `gn_rules`
-Same situation as G6. `ruleG8` delegates to `getRule('lists')`, which is a PASS-always stub in `scorer/rules/lists.ts`. GN-local implementation required before re-enabling.
-
-**To re-enable:** Write native implementations in `app/gn-validator/rules/rules-g.ts`, update `gn_rules` to `is_active = 1`, and run integration tests against all three sample documents.
+### G6 (Money/Currency) and G8 (Lists)
+`scorer/rules/money.ts` and `scorer/rules/lists.ts` have real implementations (shipped in `feature/g6-g8-implementation`). Both rules are `is_active = 1` in the `001` seed. For live environments deployed before this change, run `migrations/gn/003_enable_g6_g8.sql` to re-enable them.
