@@ -9,7 +9,8 @@ import { getParaLineRef } from '@/scorer/insights-node';
 const bold = (t: string) => `<b>${t}</b>`;
 
 // Roman numerals i–xx as list markers at line start: "  i." / "  iv)" / "(vi."
-const ROMAN_LIST_RE = /^[ \t]*\(?(?:i{1,3}|i[vx]|vi{0,3}|i?x{1,2})\)?[.)]/im;
+// (?=\s|$) required: prevents matching "i.e.," or "viz." abbreviations (no trailing space/EOL).
+const ROMAN_LIST_RE = /^[ \t]*\(?(?:i{1,3}|i[vx]|vi{0,3}|i?x{1,2})\)?[.)](?=\s|$)/im;
 
 // Numbered list markers at line start: "1." "2)" "(3." — flagged only for 2+ consecutive lines
 const NUMBERED_LINE_RE = /^[ \t]*\(?\d+[.)]/im;
