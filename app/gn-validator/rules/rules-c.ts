@@ -119,20 +119,23 @@ export async function ruleC3(doc: GNDocument): Promise<GNValidationResult[]> {
     bySubSection.set(question.section, subs);
   }
 
+  const normalizePersona = (s: string) => s.replace(/\.+$/, '').trim();
+
   for (const [subSection, questions] of bySubSection) {
-    // Collect all non-blank, non-"Not applicable." persona values
+    // Collect all non-blank, non-"Not applicable." persona values; strip trailing periods
+    // so D4-style trailing-period variants compare equal to the canonical form.
     const nonNaValues = questions
       .filter(q => q.persona && q.persona.text.trim() && q.persona.text.trim() !== 'Not applicable.')
-      .map(q => q.persona!.text.trim());
+      .map(q => normalizePersona(q.persona!.text.trim()));
 
     if (nonNaValues.length === 0) continue;
 
     const reference = nonNaValues[0];
     const inconsistent = questions.filter(q => {
       if (!q.persona) return false;
-      const v = q.persona.text.trim();
-      if (!v || v === 'Not applicable.') return false;
-      return v !== reference;
+      const raw = q.persona.text.trim();
+      if (!raw || raw === 'Not applicable.') return false;
+      return normalizePersona(raw) !== reference;
     });
 
     for (const q of inconsistent) {
