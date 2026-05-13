@@ -14,6 +14,14 @@
  *   - Multi-term requirements: require jurisdiction name + act code together
  *   - Confidence as a real score (0–1) rather than a hit count threshold
  *   - Avoid pattern conflicts across jurisdictions (e.g. "DPA" used by both DRC and UK)
+ *
+ * BACKLOG — G6 statute-quoted dollar amounts (California):
+ *   G6 should skip bare dollar amounts that appear within quoted statute language. California's
+ *   section 17 has many false positives where the statute itself uses bare $ amounts
+ *   (e.g. $25,000,000 revenue threshold, $100/$750/$2,500/$7,500 penalty amounts).
+ *   Possible approaches: per-question exclusion list (similar to G3 Q1.2.2 pattern), or context
+ *   detection (statute reference within same sentence). Requires analyst input on which approach
+ *   matches editorial intent.
  */
 
 export interface InferenceResult {
