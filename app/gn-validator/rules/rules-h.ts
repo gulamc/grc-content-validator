@@ -99,11 +99,13 @@ export async function ruleH4(_doc: GNDocument): Promise<GNValidationResult[]> {
 // GDPR: universally understood in the privacy domain.
 // DPA: domain-universal for Data Protection Authority; H2 separately guards misuse.
 // LLC: universally understood legal entity suffix.
+// DNA/HIPAA: universally known outside the legal domain; requiring introduction is noise.
 const H5_EXCEPTIONS = new Set([
   'API', 'HTML', 'CCTV', 'SMS', 'EU', 'UK', 'US',
   'URL', 'PDF', 'HTTP', 'HTTPS', 'USB', 'NATO', 'WHO', 'IMF',
   'GDP', 'CEO', 'CFO', 'CTO', 'COO',
   'GDPR', 'DPA', 'LLC',
+  'DNA', 'HIPAA',
 ]);
 
 // Common English words that happen to be all-caps in context (emphasis, section labels,

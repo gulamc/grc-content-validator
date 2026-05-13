@@ -21,6 +21,15 @@ registerRule('ampersands', ({ text }: { text: string; params: Record<string, str
     const contextEnd = Math.min(text.length, pos + 30);
     const context = text.substring(contextStart, contextEnd);
 
+    // Skip ampersands inside a parenthetical that annotates a statute section, e.g.
+    // §1798.199.40(a) (Administrative proceedings & fines) — the & is the official title.
+    // Heuristic: § followed by digits appears in the preceding ~60 chars, AND the last
+    // open-paren before the & is unclosed (no closing ) between it and the &).
+    const preceding60 = text.substring(Math.max(0, pos - 60), pos);
+    const lastOpen = preceding60.lastIndexOf('(');
+    const lastClose = preceding60.lastIndexOf(')');
+    if (/§\d/.test(preceding60) && lastOpen > lastClose) continue;
+
     // Skip if it looks like a company name (preceded by capital letters)
     if (!/[A-Z][A-Z&]+/.test(context)) {
       const locationFull = getParaLineRef(text, pos);

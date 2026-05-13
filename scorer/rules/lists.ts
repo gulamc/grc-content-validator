@@ -12,8 +12,11 @@ const bold = (t: string) => `<b>${t}</b>`;
 // (?=\s|$) required: prevents matching "i.e.," or "viz." abbreviations (no trailing space/EOL).
 const ROMAN_LIST_RE = /^[ \t]*\(?(?:i{1,3}|i[vx]|vi{0,3}|i?x{1,2})\)?[.)](?=\s|$)/im;
 
-// Numbered list markers at line start: "1." "2)" "(3." — flagged only for 2+ consecutive lines
-const NUMBERED_LINE_RE = /^[ \t]*\(?\d+[.)]/im;
+// Numbered list markers at line start: "1." "2)" "(3." — flagged only for 2+ consecutive lines.
+// \d{1,2} limits to 1-2 digit numbers so multi-segment statute references like "1798.199.90(a)"
+// are never matched (4 digits → regex fails). (?!\d) prevents "17." from matching "170. item".
+// \s+ requires content after the marker, ruling out bare "1798." mid-citation.
+const NUMBERED_LINE_RE = /^[ \t]*\(?\d{1,2}[.)](?!\d)\s+/m;
 
 registerRule('lists', ({ text }: { text: string; params: Record<string, string> }) => {
   const issues: string[] = [];
