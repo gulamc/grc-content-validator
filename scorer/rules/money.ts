@@ -1,8 +1,8 @@
 // scorer/rules/money.ts
 // G6 — Money and Currency
-// Flags: (1) bare currency symbols without ISO code prefix,
-//         (2) currency code appearing after the number,
-//         (3) non-USD amounts without approximate USD conversion brackets in same sentence.
+// Flags: (1) currency code appearing after the number,
+//         (2) non-USD amounts without approximate USD conversion brackets in same sentence.
+// Note: bare symbols ($X, €X, £X) are valid per spec for USD/GBP/EUR — not flagged.
 
 import { registerRule } from '@/lib/rule-registry';
 import { getParaLineRef } from '@/scorer/insights-node';
@@ -25,8 +25,7 @@ const NON_USD_CURRENCIES = new Set([
   'UYU', 'BOB', 'HNL', 'GTQ', 'NIO', 'DOP', 'JMD', 'TTD',
 ]);
 
-// Type 1: bare symbol immediately before a digit
-const BARE_SYMBOL_RE = /[$£€¥]\s*\d/g;
+// Type 1 (removed): bare symbol check — $X/€X/£X are valid per spec for USD/GBP/EUR.
 
 // Type 2: currency code (or USD) appearing after a number — code must precede amount
 const CODE_AFTER_RE = /\d[\d,]*\s*([A-Z]{3})\b/g;
@@ -72,26 +71,6 @@ export function applyMoneyFix(text: string, _params: Record<string, string> = {}
 
 registerRule('money', ({ text }: { text: string; params: Record<string, string> }) => {
   const issues: string[] = [];
-
-  // Pre-compute (approx. ...) bracket spans so Type 1 can skip symbols inside them.
-  // A bare $ inside "(approx. $120)" is the correct USD-conversion format, not a violation.
-  const APPROX_BRACKET_RE = /\(\s*approx\.?\s[^)]*\)/gi;
-  const approxSpans: Array<[number, number]> = [];
-  for (const m of text.matchAll(APPROX_BRACKET_RE)) {
-    approxSpans.push([m.index!, m.index! + m[0].length]);
-  }
-  const inApproxBracket = (pos: number) => approxSpans.some(([s, e]) => pos >= s && pos < e);
-
-  // Type 1: bare currency symbol without ISO code prefix
-  for (const match of Array.from(text.matchAll(BARE_SYMBOL_RE))) {
-    const pos = match.index ?? 0;
-    if (inApproxBracket(pos)) continue;
-    const location = getParaLineRef(text, pos);
-    const symbol = match[0][0];
-    issues.push(
-      `${location}: "${match[0].trim()}" — ${bold(`Currency symbol '${symbol}' should use ISO code prefix (e.g. USD 100, EUR 50)`)}`
-    );
-  }
 
   // Type 2: currency code appearing after the number
   for (const match of Array.from(text.matchAll(CODE_AFTER_RE))) {
