@@ -33,9 +33,23 @@ interface PassthroughDel {
   node: Element;
 }
 
+/**
+ * Records the character-position range within the committed text that originated
+ * from an analyst <w:ins> element, along with that element's author/date attributes.
+ * Used by applyDiffToParagraph to re-wrap EQUAL diff segments that fall inside an
+ * analyst insertion, preserving author attribution instead of emitting plain <w:r>.
+ */
+interface InsRange {
+  start: number;
+  end: number;
+  author: string;
+  date: string;
+}
+
 interface ParaRunMap {
   runs: SourceRun[];
   passthroughs: PassthroughDel[];
+  insRanges: InsRange[];
   pPrXml: string | null;
 }
 
@@ -55,6 +69,7 @@ function extractRPr(rNode: Element): string | null {
 function buildParaRunMap(p: Element): ParaRunMap {
   const runs: SourceRun[] = [];
   const passthroughs: PassthroughDel[] = [];
+  const insRanges: InsRange[] = [];
   let pos = 0;
 
   const pPrs = getChildren(p, 'pPr');
@@ -68,6 +83,25 @@ function buildParaRunMap(p: Element): ParaRunMap {
 
       if (ln === 'del') {
         passthroughs.push({ afterCommittedPos: pos, node: child });
+        continue;
+      }
+
+      if (ln === 'ins') {
+        // Recurse normally so w:ins text is included in position tracking and
+        // originalText (matching the parser's committed-text view). Record the
+        // character range so applyDiffToParagraph can re-wrap EQUAL segments
+        // that fall inside analyst insertions with the original author/date,
+        // preserving insertion attribution instead of emitting plain <w:r>.
+        const rangeStart = pos;
+        walkNode(child);
+        if (pos > rangeStart) {
+          insRanges.push({
+            start: rangeStart,
+            end: pos,
+            author: child.getAttribute('w:author') ?? AUTHOR,
+            date: child.getAttribute('w:date') ?? DATE,
+          });
+        }
         continue;
       }
 
@@ -89,7 +123,7 @@ function buildParaRunMap(p: Element): ParaRunMap {
   }
 
   walkNode(p);
-  return { runs, passthroughs, pPrXml };
+  return { runs, passthroughs, insRanges, pPrXml };
 }
 
 function rPrAtPos(runs: SourceRun[], pos: number): string | null {
@@ -139,6 +173,66 @@ function makeInsEl(doc: Document, id: number, text: string, rPrXml: string | nul
   return ins;
 }
 
+/** Wraps a run in a <w:ins> with the original analyst's author/date. */
+function makeAnalystInsEl(
+  doc: Document,
+  id: number,
+  text: string,
+  rPrXml: string | null,
+  author: string,
+  date: string,
+): Element {
+  const ins = doc.createElementNS(W, 'w:ins');
+  ins.setAttribute('w:id', String(id));
+  ins.setAttribute('w:author', author);
+  ins.setAttribute('w:date', date);
+  ins.appendChild(makeRunEl(doc, text, rPrXml));
+  return ins;
+}
+
+/**
+ * Emit an EQUAL diff segment, re-wrapping any sub-ranges that originated from
+ * analyst <w:ins> elements so their author/date attribution is preserved.
+ * For text outside insRanges, emits plain <w:r>. Handles segments that cross
+ * insRange boundaries by splitting into sub-chunks.
+ */
+function emitEqualSegment(
+  p: Element,
+  text: string,
+  startPos: number,
+  runs: SourceRun[],
+  insRanges: InsRange[],
+  nextId: () => number,
+  ownerDoc: Document,
+): void {
+  let remaining = text;
+  let scanPos = startPos;
+
+  while (remaining.length > 0) {
+    // Find which insRange (if any) covers scanPos.
+    const activeRange = insRanges.find(r => scanPos >= r.start && scanPos < r.end);
+
+    if (activeRange) {
+      const lenInIns = Math.min(remaining.length, activeRange.end - scanPos);
+      const chunk = remaining.slice(0, lenInIns);
+      p.appendChild(makeAnalystInsEl(ownerDoc, nextId(), chunk, rPrAtPos(runs, scanPos), activeRange.author, activeRange.date));
+      remaining = remaining.slice(lenInIns);
+      scanPos += lenInIns;
+    } else {
+      // Find the next insRange start after scanPos (if any).
+      let nextInsStart = Infinity;
+      for (const r of insRanges) {
+        if (r.start > scanPos) nextInsStart = Math.min(nextInsStart, r.start);
+      }
+      const lenOutside = Math.min(remaining.length, nextInsStart - scanPos);
+      const chunk = remaining.slice(0, lenOutside);
+      p.appendChild(makeRunEl(ownerDoc, chunk, rPrAtPos(runs, scanPos)));
+      remaining = remaining.slice(lenOutside);
+      scanPos += lenOutside;
+    }
+  }
+}
+
 // ── Single-paragraph diff application ────────────────────────────────────────
 
 function applyDiffToParagraph(
@@ -150,7 +244,7 @@ function applyDiffToParagraph(
 ): void {
   if (originalText === correctedText) return;
 
-  const { runs, passthroughs, pPrXml } = buildParaRunMap(p);
+  const { runs, passthroughs, insRanges, pPrXml } = buildParaRunMap(p);
 
   const segments = diff(originalText, correctedText);
   const merged: Array<[number, string]> = [];
@@ -177,7 +271,7 @@ function applyDiffToParagraph(
   for (const [op, text] of merged) {
     if (op === EQUAL) {
       flushPassthroughs(origPos);
-      p.appendChild(makeRunEl(ownerDoc, text, rPrAtPos(runs, origPos)));
+      emitEqualSegment(p, text, origPos, runs, insRanges, nextId, ownerDoc);
       origPos += text.length;
     } else if (op === DELETE) {
       flushPassthroughs(origPos);
