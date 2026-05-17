@@ -22,6 +22,14 @@
  *   Possible approaches: per-question exclusion list (similar to G3 Q1.2.2 pattern), or context
  *   detection (statute reference within same sentence). Requires analyst input on which approach
  *   matches editorial intent.
+ *
+ * BACKLOG (May 17 — discovered during B1 parenthetical guard fix):
+ *   B1 still incorrectly splits unparenthesized publication titles like
+ *   "Guide on Reporting and Managing a Data Breach". The current parenthetical
+ *   guard only protects (...)-enclosed text. Detection of unparenthesized
+ *   publication titles requires different heuristic (e.g., proximity to
+ *   "Guide", "Report", or other publication markers). Needs analyst feedback
+ *   during testing to confirm frequency before tuning.
  */
 
 export interface InferenceResult {
