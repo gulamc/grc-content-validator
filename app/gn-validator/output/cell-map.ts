@@ -87,6 +87,43 @@ const LABEL_RESPONSE = /^response/i;
 const LABEL_CITATION = /^citation/i;
 const LABEL_PERSONA = /persona/i;
 
+// Mirrors parser.ts SECTION_HEADING_RE: subsection headings like "2.1 ...", "17.3. ..."
+const SECTION_HEADING_RE = /^(\d+\.\d+)\.?\s/;
+
+function extractParagraphText(p: Element): string {
+  let text = '';
+  function walk(node: Element): void {
+    for (let i = 0; i < node.childNodes.length; i++) {
+      const c = node.childNodes[i] as Element;
+      if (!c.localName) continue;
+      if (c.localName === 't') text += c.textContent ?? '';
+      else if (c.childNodes?.length) walk(c);
+    }
+  }
+  walk(p);
+  return text;
+}
+
+/**
+ * Returns true if any <w:p> sibling preceding tblNode in its parent matches
+ * SECTION_HEADING_RE — i.e., the table is a question table, not a preamble table.
+ * Preamble tables (before the first numbered subsection heading) appear in PIA
+ * documents as "Laws", "Supervisory authority", etc. and are skipped by the
+ * parser's currentSection guard but counted by getDescendants, causing index drift.
+ * If tblNode's parent is not <w:body>, returns true (not our concern to skip).
+ */
+function hasPrecedingSectionHeading(tblNode: Element): boolean {
+  const parent = tblNode.parentNode as Element | null;
+  if (!parent || parent.localName !== 'body') return true;
+  for (let i = 0; i < parent.childNodes.length; i++) {
+    const sibling = parent.childNodes[i] as Element;
+    if (sibling === tblNode) break;
+    if (sibling.localName !== 'p') continue;
+    if (SECTION_HEADING_RE.test(extractParagraphText(sibling).trim())) return true;
+  }
+  return false;
+}
+
 interface QuestionTable {
   tableIndex: number;
   responseCell?: CellEntry;
@@ -133,8 +170,13 @@ export function buildCellIdIndex(
       else if (LABEL_PERSONA.test(label)) personaCell = content;
     }
 
-    // Only treat tables that have at least a response or citation cell as question tables.
+    // Only treat tables that have at least a response or citation cell as question tables,
+    // AND that appear after a section heading in the document body. Tables before the
+    // first numbered subsection heading are preamble tables (skipped by the parser's
+    // currentSection guard) and must be excluded here to keep positional alignment.
     if (responseCell || citationCell) {
+      const tblNode = cells[0]?.tcNode?.parentNode?.parentNode as Element | undefined;
+      if (tblNode && !hasPrecedingSectionHeading(tblNode)) continue;
       questionTables.push({ tableIndex, responseCell, citationCell, personaCell });
     }
   }

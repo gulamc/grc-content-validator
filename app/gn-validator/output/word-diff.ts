@@ -44,6 +44,14 @@ function extractRPr(rNode: Element): string | null {
   return rPrs.length ? serEl(rPrs[0]) : null;
 }
 
+// BACKLOG (Bug 3B — May 17 investigation):
+// applyDiffToParagraph destroys <w:br> soft line breaks during paragraph rebuild.
+// No observed cases in current test documents (CT Overview, CT PIA, Belgium Breach,
+// California, DRC have zero <w:br> in modified paragraphs).
+// When this becomes an issue: preserve <w:br> as a passthrough in buildParaRunMap,
+// re-emit during reconstruction.
+// Latent defect — fix when first real case surfaces.
+
 function buildParaRunMap(p: Element): ParaRunMap {
   const runs: SourceRun[] = [];
   const passthroughs: PassthroughDel[] = [];
