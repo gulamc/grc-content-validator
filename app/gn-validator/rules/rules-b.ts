@@ -95,15 +95,40 @@ function splitPeriodJoinedLine(line: string): string[] {
   return parts.filter(p => p.trim());
 }
 
+/**
+ * Split a segment on " and " boundaries where "and" is NOT inside an unclosed
+ * parenthetical. Mirrors the G12 ampersand guard: check the last open-paren vs
+ * last close-paren in the text preceding the match position — if lastOpen >
+ * lastClose, the "and" is inside a parenthetical (e.g. a statute/guideline title)
+ * and should not trigger a citation split.
+ */
+function splitOnAndNotInParens(segment: string): string[] {
+  const andRe = /\s+and\s+(?=[A-Z])/g;
+  const parts: string[] = [];
+  let start = 0;
+  let match: RegExpExecArray | null;
+  while ((match = andRe.exec(segment)) !== null) {
+    const preceding = segment.slice(0, match.index);
+    const lastOpen = preceding.lastIndexOf('(');
+    const lastClose = preceding.lastIndexOf(')');
+    if (lastOpen > lastClose) continue; // inside parenthetical — skip
+    parts.push(segment.slice(start, match.index));
+    start = match.index + match[0].length;
+  }
+  parts.push(segment.slice(start));
+  return parts;
+}
+
 export function applyB1Fix(cellText: string): string {
   const lines = cellText.split('\n').map(line => line.replace(BULLET_RE, '').trimEnd());
   const expanded: string[] = [];
   for (const line of lines) {
     if (!line.trim()) { expanded.push(line); continue; }
-    // Split on ". " citation boundaries first, then on " and " boundaries.
+    // Split on ". " citation boundaries first, then on " and " boundaries
+    // (guarded against splitting inside parenthetical statute/guideline titles).
     const periodSplit = splitPeriodJoinedLine(line);
     for (const segment of periodSplit) {
-      const andParts = segment.split(/\s+and\s+(?=[A-Z])/);
+      const andParts = splitOnAndNotInParens(segment);
       expanded.push(...andParts.map(p => p.trimEnd()));
     }
   }
