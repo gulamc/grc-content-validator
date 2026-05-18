@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as mammoth from 'mammoth';
 import { inferJurisdiction } from '@/app/gn-validator/utils/jurisdiction-inference';
+import { JURISDICTION_GROUPS } from '@/app/gn-validator/utils/jurisdictions';
 
 export const runtime = 'nodejs';
 
@@ -21,6 +22,16 @@ export async function POST(req: NextRequest) {
     }).extractRawText({ buffer: buf });
 
     const result = inferJurisdiction(text);
+    if (result.confidence === 'low') {
+      const fileName = file.name.toLowerCase();
+      for (const group of JURISDICTION_GROUPS) {
+        for (const j of group.jurisdictions) {
+          if (fileName.includes(j.toLowerCase())) {
+            return NextResponse.json({ success: true, jurisdiction: j, confidence: 'medium' });
+          }
+        }
+      }
+    }
     return NextResponse.json({ success: true, ...result });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Detection failed.';
