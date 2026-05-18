@@ -253,14 +253,22 @@ export default function GNValidatorPage() {
                     </div>
                   )}
 
-                  {pageState === 'detecting' && (
-                    <div className="flex items-center gap-2 px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-500">
-                      <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                      Detecting jurisdiction…
+                  {pageState === 'detecting' && !showOverride && (
+                    <div className="flex items-center justify-between px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-500">
+                      <div className="flex items-center gap-2">
+                        <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                        Detecting jurisdiction…
+                      </div>
+                      <button
+                        onClick={() => setShowOverride(true)}
+                        className="text-xs text-slate-400 hover:text-slate-600 underline underline-offset-2"
+                      >
+                        select manually
+                      </button>
                     </div>
                   )}
 
-                  {(pageState === 'detected' || pageState === 'validating' || pageState === 'results') && (
+                  {(pageState === 'detected' || pageState === 'validating' || pageState === 'results' || (pageState === 'detecting' && showOverride)) && (
                     <>
                       {inferredConfidence === 'high' && !showOverride ? (
                         // High confidence — show detected badge with override link
