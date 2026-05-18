@@ -75,6 +75,7 @@ export default function GNValidatorPage() {
   // Jurisdiction inference state
   const [inferredJurisdiction, setInferredJurisdiction] = useState<string | null>(null);
   const [inferredConfidence, setInferredConfidence] = useState<'high' | 'medium' | 'low'>('low');
+  const [inferredSource, setInferredSource] = useState<'filename' | 'content' | null>(null);
   const [showOverride, setShowOverride] = useState(false);
   const [manualJurisdiction, setManualJurisdiction] = useState('');
 
@@ -94,6 +95,7 @@ export default function GNValidatorPage() {
     setShowOverride(false);
     setInferredJurisdiction(null);
     setInferredConfidence('low');
+    setInferredSource(null);
     setPageState('detecting');
 
     try {
@@ -104,6 +106,7 @@ export default function GNValidatorPage() {
       if (data.success && data.jurisdiction) {
         setInferredJurisdiction(data.jurisdiction);
         setInferredConfidence(data.confidence as 'high' | 'medium' | 'low');
+        setInferredSource((data.source ?? null) as 'filename' | 'content' | null);
       }
     } catch {
       // Detection failure: leave confidence 'low', user picks from dropdown
@@ -145,6 +148,7 @@ export default function GNValidatorPage() {
     setFile(null);
     setInferredJurisdiction(null);
     setInferredConfidence('low');
+    setInferredSource(null);
     setShowOverride(false);
     setManualJurisdiction('');
     if (fileInputRef.current) fileInputRef.current.value = '';
@@ -271,16 +275,23 @@ export default function GNValidatorPage() {
                   {(pageState === 'detected' || pageState === 'validating' || pageState === 'results' || (pageState === 'detecting' && showOverride)) && (
                     <>
                       {inferredConfidence === 'high' && !showOverride ? (
-                        // High confidence — show detected badge with override link
+                        // High confidence — show detected badge with source label and override link
                         <div className="flex items-center justify-between px-4 py-2.5 bg-emerald-50 border border-emerald-200 rounded-lg">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
                             <MapPin className="w-4 h-4 text-emerald-600 shrink-0" />
-                            <span className="text-sm font-medium text-emerald-800">{inferredJurisdiction}</span>
+                            <div className="flex flex-col min-w-0">
+                              <span className="text-sm font-medium text-emerald-800 truncate">{inferredJurisdiction}</span>
+                              {inferredSource && (
+                                <span className="text-xs text-emerald-600">
+                                  Detected from {inferredSource === 'filename' ? 'filename' : 'document content'}
+                                </span>
+                              )}
+                            </div>
                           </div>
                           <button
                             onClick={() => setShowOverride(true)}
                             disabled={pageState === 'validating'}
-                            className="text-xs text-emerald-600 hover:text-emerald-800 underline underline-offset-2 disabled:opacity-50"
+                            className="text-xs text-emerald-600 hover:text-emerald-800 underline underline-offset-2 disabled:opacity-50 shrink-0 ml-2"
                           >
                             override
                           </button>
