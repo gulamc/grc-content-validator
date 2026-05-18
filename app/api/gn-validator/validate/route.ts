@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
     if (!gnType || !VALID_GN_TYPES.has(gnType as GNType)) {
       return NextResponse.json({ success: false, error: 'Invalid GN type.' }, { status: 400 });
     }
-    if (!jurisdiction || !VALID_JURISDICTIONS.has(jurisdiction)) {
+    if (!jurisdiction || (!VALID_JURISDICTIONS.has(jurisdiction) && jurisdiction !== 'Other')) {
       return NextResponse.json({ success: false, error: 'Invalid jurisdiction.' }, { status: 400 });
     }
 
@@ -37,6 +37,31 @@ export async function POST(request: NextRequest) {
 
     const doc = await parseGNDocument(buf, gnType as GNType, jurisdiction, file.name);
     doc.isEU = isEUJurisdiction(jurisdiction);
+
+    if (doc.questions.length === 0) {
+      return NextResponse.json({
+        success: false,
+        error: 'This document does not appear to be a valid Guidance Note template — no question tables were detected. Please check that the correct file was uploaded.',
+      }, { status: 422 });
+    }
+
+    const qCount = doc.questions.length;
+    if (qCount >= 5) {
+      const withResponse = doc.questions.filter(q => q.response).length;
+      const withPersona  = doc.questions.filter(q => q.persona).length;
+      let mismatch: string | null = null;
+      if (gnType === 'marketing' && withResponse / qCount > 0.1) {
+        mismatch = `Template mismatch: a Marketing GN was expected but ${withResponse} of ${qCount} questions have a Response field. Please confirm the GN type is correct.`;
+      } else if ((gnType === 'overview' || gnType === 'breach' || gnType === 'pia') && withResponse / qCount < 0.5) {
+        mismatch = `Template mismatch: a ${gnType.charAt(0).toUpperCase() + gnType.slice(1)} GN was expected but only ${withResponse} of ${qCount} questions have a Response field. Please confirm the GN type is correct.`;
+      } else if (gnType === 'employment' && withPersona / qCount > 0.1) {
+        mismatch = `Template mismatch: an Employment GN was expected but ${withPersona} of ${qCount} questions have an Applicable Persona field. Please confirm the GN type is correct.`;
+      }
+      if (mismatch) {
+        return NextResponse.json({ success: false, error: mismatch }, { status: 422 });
+      }
+    }
+
     const results = await runGNRules(doc);
     const outputBuf = await generateDocx(doc, results);
 

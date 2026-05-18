@@ -52,7 +52,7 @@ const MARKERS: Array<{ jurisdiction: string; patterns: string[] }> = [
 
   // European Union / EEA — GDPR is universal so not listed; use national identifiers
   { jurisdiction: 'Austria',     patterns: ['DSG', 'Datenschutzgesetz', 'Datenschutzbehörde', 'Austrian Data Protection Act'] },
-  { jurisdiction: 'Belgium',     patterns: ['Autorité de protection des données', 'APD-GBA', 'Belgian Data Protection Authority'] },
+  { jurisdiction: 'Belgium',     patterns: ['Autorité de protection des données', 'APD-GBA', 'Belgian Data Protection Authority', 'Belgian DPA', 'apd-gba.be', 'Gegevensbeschermingsautoriteit'] },
   { jurisdiction: 'Denmark',     patterns: ['Datatilsynet', 'Danish Data Protection Act', 'databeskyttelsesloven'] },
   { jurisdiction: 'Finland',     patterns: ['Tietosuojalaki', 'Tietosuojavaltuutettu', 'Finnish Data Protection Ombudsman'] },
   { jurisdiction: 'France',      patterns: ['CNIL', 'Loi Informatique et Libertés', 'Commission nationale de l\'informatique'] },
@@ -76,7 +76,7 @@ const MARKERS: Array<{ jurisdiction: string; patterns: string[] }> = [
   { jurisdiction: 'Singapore',              patterns: ['PDPC', 'Personal Data Protection Commission of Singapore', 'Personal Data Protection Act 2012'] },
   { jurisdiction: 'South Africa',           patterns: ['POPIA', 'Protection of Personal Information Act', 'Information Regulator of South Africa'] },
   { jurisdiction: 'Switzerland',            patterns: ['nFADP', 'Federal Act on Data Protection', 'FDPIC', 'Bundesgesetz über den Datenschutz'] },
-  { jurisdiction: 'United Kingdom',         patterns: ['UK GDPR', 'Information Commissioner', 'Data Protection Act 2018', 'ICO Guidance'] },
+  { jurisdiction: 'United Kingdom',         patterns: ['UK GDPR', 'Information Commissioner', 'ICO Guidance'] },
 ];
 
 // Scan first ~3 000 characters (~500 words) — enough to cover the opening section

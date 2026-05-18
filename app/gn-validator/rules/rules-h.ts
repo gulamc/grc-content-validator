@@ -106,6 +106,7 @@ const H5_EXCEPTIONS = new Set([
   'GDP', 'CEO', 'CFO', 'CTO', 'COO',
   'GDPR', 'DPA', 'LLC',
   'DNA', 'HIPAA',
+  'FAQ',
 ]);
 
 // Common English words that happen to be all-caps in context (emphasis, section labels,
