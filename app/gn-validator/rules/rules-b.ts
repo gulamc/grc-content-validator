@@ -46,10 +46,20 @@ function hasBullets(text: string): boolean {
   return text.split('\n').some(line => BULLET_RE.test(line));
 }
 
-// "and" between two law-reference boundaries: letter/paren then " and " then capital letter.
-// Avoids splitting article ranges like "Articles 7 and 8" (B2's concern).
+// "and" between two citation entries: requires the text after "and" to start
+// with a recognised citation prefix (CITATION_START_RE). This prevents false
+// positives on law titles that contain "and" internally, e.g.
+// "Electronic Communications Networks and Services Directive" or
+// "Guide on Reporting and Managing a Data Breach".
 function hasAndJoinedLaws(text: string): boolean {
-  return text.split('\n').some(line => /[a-zA-Z)]\s+and\s+[A-Z]/.test(line));
+  return text.split('\n').some(line => {
+    const andRe = /[a-zA-Z)]\s+and\s+/g;
+    let m: RegExpExecArray | null;
+    while ((m = andRe.exec(line)) !== null) {
+      if (startsWithCitationPrefix(line.slice(m.index + m[0].length))) return true;
+    }
+    return false;
+  });
 }
 
 // Words that legitimately precede ". §" or ". Section" as part of an abbreviation
@@ -102,14 +112,15 @@ function splitPeriodJoinedLine(line: string): string[] {
 }
 
 /**
- * Split a segment on " and " boundaries where "and" is NOT inside an unclosed
- * parenthetical. Mirrors the G12 ampersand guard: check the last open-paren vs
- * last close-paren in the text preceding the match position — if lastOpen >
- * lastClose, the "and" is inside a parenthetical (e.g. a statute/guideline title)
- * and should not trigger a citation split.
+ * Split a segment on " and " boundaries where:
+ *   1. "and" is NOT inside an unclosed parenthetical (parenthetical guard), and
+ *   2. the text after "and" starts with a recognised citation prefix (prefix guard).
+ * The prefix guard prevents splitting inside law titles that contain "and" internally,
+ * e.g. "Electronic Communications Networks and Services Directive" or
+ * "Guide on Reporting and Managing a Data Breach".
  */
 function splitOnAndNotInParens(segment: string): string[] {
-  const andRe = /\s+and\s+(?=[A-Z])/g;
+  const andRe = /\s+and\s+/g;
   const parts: string[] = [];
   let start = 0;
   let match: RegExpExecArray | null;
@@ -118,6 +129,7 @@ function splitOnAndNotInParens(segment: string): string[] {
     const lastOpen = preceding.lastIndexOf('(');
     const lastClose = preceding.lastIndexOf(')');
     if (lastOpen > lastClose) continue; // inside parenthetical — skip
+    if (!startsWithCitationPrefix(segment.slice(match.index + match[0].length))) continue; // not a citation start — skip
     parts.push(segment.slice(start, match.index));
     start = match.index + match[0].length;
   }
