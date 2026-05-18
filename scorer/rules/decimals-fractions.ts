@@ -40,6 +40,16 @@ registerRule('decimals_fractions', ({ text }: { text: string; params: Record<str
     }
   }
 
+  // Pattern 3: Lowercase "no." citation abbreviation (§7(2) no.1 = "number 1").
+  // Pattern 1 already excludes uppercase "No.N" via the abbreviation regex.
+  // Lowercase "no.N" is not caught there — add it explicitly.
+  const noAbbrevPattern = /\bno\.(\d+)/gi;
+  for (const match of text.matchAll(noAbbrevPattern)) {
+    if (match.index !== undefined) {
+      validReferences.add(match.index + match[0].indexOf('.'));
+    }
+  }
+
   // Only flag matches that are NOT valid references
   const noLeadingZero = allMatches.filter(match => !validReferences.has(match.index || 0));
 
