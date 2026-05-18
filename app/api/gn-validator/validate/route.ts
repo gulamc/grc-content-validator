@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
     if (!gnType || !VALID_GN_TYPES.has(gnType as GNType)) {
       return NextResponse.json({ success: false, error: 'Invalid GN type.' }, { status: 400 });
     }
-    if (!jurisdiction || !VALID_JURISDICTIONS.has(jurisdiction)) {
+    if (!jurisdiction || (!VALID_JURISDICTIONS.has(jurisdiction) && jurisdiction !== 'Other')) {
       return NextResponse.json({ success: false, error: 'Invalid jurisdiction.' }, { status: 400 });
     }
 

@@ -299,6 +299,7 @@ export default function GNValidatorPage() {
                                 ))}
                               </optgroup>
                             ))}
+                            <option value="Other">Other (unsupported jurisdiction)</option>
                           </select>
                           {showOverride && (
                             <button
