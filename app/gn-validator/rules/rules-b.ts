@@ -1,6 +1,12 @@
 import type { GNDocument, GNValidationResult } from '../types';
+import { JURISDICTION_GROUPS } from '../utils/jurisdictions';
 
 // ── B1 helpers ────────────────────────────────────────────────────────────────
+
+// "Section/Sections → §/§§" applies only to US state jurisdictions. Non-US
+// documents correctly use "Section X of [English guidance]" for EU/international
+// instruments — the § symbol is not appropriate there.
+const US_STATES = new Set(JURISDICTION_GROUPS[0].jurisdictions);
 
 const BULLET_RE = /^[\s•\-\*·‣▪]+/;
 
@@ -151,7 +157,7 @@ export async function ruleB1(doc: GNDocument): Promise<GNValidationResult[]> {
     if (hasBullets(text)) issues.push('contains bullet points');
     if (hasAndJoinedLaws(text)) issues.push('laws joined by "and" on the same line');
     if (hasPeriodJoinedLaws(text)) issues.push('multiple citations joined on one line');
-    if (hasSectionSpelledOut(text)) issues.push('"Section"/"Sections" should be § / §§ for US statutes');
+    if (US_STATES.has(doc.jurisdiction) && hasSectionSpelledOut(text)) issues.push('"Section"/"Sections" should be § / §§ for US statutes');
 
     if (issues.length === 0) continue;
 
