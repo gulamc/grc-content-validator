@@ -2,6 +2,23 @@ import type { GNDocument, GNValidationResult } from '../types';
 
 // ── H1 — Authority Names: No "the" in Abbreviation ───────────────────────────
 
+/**
+ * H1 — Authority abbreviation in brackets
+ *
+ * BACKLOG (May 17, 2026): Known limitation.
+ *
+ * H1 auto-fixes "(the X)" → "(X)" assuming X is an authority/organization
+ * abbreviation. This is correct for cases like "(the ICO)" → "(ICO)" but
+ * incorrect for cases where "the X" is the intended reference form for a
+ * document or thing, like "(the FAQ)", "(the Code)", "(the Guidelines)".
+ *
+ * Distinguishing these requires editorial judgment. Sprint 2 will convert
+ * H1 to an AI-judged rule. Until then, analysts must manually reject H1
+ * fixes for non-organization reference forms.
+ *
+ * See H1_backlog.md in project docs for full context.
+ */
+
 const H1_RE = /\(the\s+[A-Z]{2,}(?:\s+[A-Z]{2,})*\)/;
 const H1_FIX_RE = /\(the\s+([A-Z]{2,}(?:\s+[A-Z]{2,})*)\)/g;
 
