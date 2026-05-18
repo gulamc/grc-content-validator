@@ -50,33 +50,79 @@ const MARKERS: Array<{ jurisdiction: string; patterns: string[] }> = [
   { jurisdiction: 'Texas',       patterns: ['Texas Data Privacy and Security Act', 'TDPSA', 'Tex. Bus. & Com. Code'] },
   { jurisdiction: 'Virginia',    patterns: ['VCDPA', 'Virginia Consumer Data Protection Act', 'Va. Code Ann.'] },
 
-  // European Union / EEA — GDPR is universal so not listed; use national identifiers
-  { jurisdiction: 'Austria',     patterns: ['DSG', 'Datenschutzgesetz', 'Datenschutzbehörde', 'Austrian Data Protection Act'] },
-  { jurisdiction: 'Belgium',     patterns: ['Autorité de protection des données', 'APD-GBA', 'Belgian Data Protection Authority', 'Belgian DPA', 'apd-gba.be', 'Gegevensbeschermingsautoriteit'] },
-  { jurisdiction: 'Denmark',     patterns: ['Datatilsynet', 'Danish Data Protection Act', 'databeskyttelsesloven'] },
-  { jurisdiction: 'Finland',     patterns: ['Tietosuojalaki', 'Tietosuojavaltuutettu', 'Finnish Data Protection Ombudsman'] },
-  { jurisdiction: 'France',      patterns: ['CNIL', 'Loi Informatique et Libertés', 'Commission nationale de l\'informatique'] },
-  { jurisdiction: 'Germany',     patterns: ['BDSG', 'Bundesdatenschutzgesetz', 'BfDI', 'Datenschutz-Grundverordnung'] },
-  { jurisdiction: 'Ireland',     patterns: ['Data Protection Commission', 'Irish Data Protection Act 2018', 'An Coimisiún um Chosaint Sonraí'] },
-  { jurisdiction: 'Italy',       patterns: ['Garante per la protezione dei dati personali', 'Codice Privacy', 'D.Lgs. 196/2003'] },
-  { jurisdiction: 'Netherlands', patterns: ['Autoriteit Persoonsgegevens', 'Uitvoeringswet AVG', 'Dutch Data Protection Authority'] },
-  { jurisdiction: 'Norway',      patterns: ['Datatilsynet', 'Personopplysningsloven', 'Norwegian Data Protection Authority'] },
-  { jurisdiction: 'Poland',      patterns: ['UODO', 'Urząd Ochrony Danych Osobowych', 'Ustawa o ochronie danych osobowych'] },
-  { jurisdiction: 'Spain',       patterns: ['AEPD', 'Agencia Española de Protección de Datos', 'Ley Orgánica de Protección de Datos'] },
-  { jurisdiction: 'Sweden',      patterns: ['IMY', 'Integritetsskyddsmyndigheten', 'dataskyddsförordningen'] },
+  // European Union / EEA — GDPR is universal so not listed; use national identifiers.
+  // Note: "PDPA" intentionally excluded as a bare marker — used generically across
+  // many jurisdictions ("Personal Data Protection Act/Authority").
+  { jurisdiction: 'Austria',        patterns: ['DSG', 'Datenschutzgesetz', 'Datenschutzbehörde', 'Austrian Data Protection Act'] },
+  { jurisdiction: 'Belgium',        patterns: ['Autorité de protection des données', 'APD-GBA', 'Belgian Data Protection Authority', 'Belgian DPA', 'apd-gba.be', 'Gegevensbeschermingsautoriteit'] },
+  { jurisdiction: 'Czech Republic', patterns: ['ÚOOÚ', 'Úřad pro ochranu osobních údajů', 'Act No. 110/2019', 'Czech Personal Data Processing Act'] },
+  { jurisdiction: 'Denmark',        patterns: ['Datatilsynet', 'Danish Data Protection Act', 'databeskyttelsesloven'] },
+  { jurisdiction: 'Finland',        patterns: ['Tietosuojalaki', 'Tietosuojavaltuutettu', 'Finnish Data Protection Ombudsman'] },
+  { jurisdiction: 'France',         patterns: ['CNIL', 'Loi Informatique et Libertés', 'Commission nationale de l\'informatique'] },
+  { jurisdiction: 'Germany',        patterns: ['BDSG', 'Bundesdatenschutzgesetz', 'BfDI', 'Datenschutz-Grundverordnung'] },
+  { jurisdiction: 'Greece',         patterns: ['HDPA', 'Hellenic Data Protection Authority', 'Law 4624/2019'] },
+  { jurisdiction: 'Hungary',        patterns: ['NAIH', 'Nemzeti Adatvédelmi és Információszabadság Hatóság', 'Act CXII of 2011'] },
+  { jurisdiction: 'Ireland',        patterns: ['Data Protection Commission', 'Irish Data Protection Act 2018', 'An Coimisiún um Chosaint Sonraí'] },
+  { jurisdiction: 'Italy',          patterns: ['Garante per la protezione dei dati personali', 'Codice Privacy', 'D.Lgs. 196/2003'] },
+  // Luxembourg and Portugal both use "CNPD" — must always be qualified with country name
+  // to avoid cross-attribution. Luxembourg's regulator is in French; Portugal's in Portuguese.
+  { jurisdiction: 'Luxembourg',     patterns: ['CNPD Luxembourg', 'Commission nationale pour la protection des données', 'Luxembourg Data Protection Law'] },
+  { jurisdiction: 'Netherlands',    patterns: ['Autoriteit Persoonsgegevens', 'Uitvoeringswet AVG', 'Dutch Data Protection Authority'] },
+  { jurisdiction: 'Norway',         patterns: ['Datatilsynet', 'Personopplysningsloven', 'Norwegian Data Protection Authority'] },
+  { jurisdiction: 'Poland',         patterns: ['UODO', 'Urząd Ochrony Danych Osobowych', 'Ustawa o ochronie danych osobowych'] },
+  { jurisdiction: 'Portugal',       patterns: ['Lei n.º 58/2019', 'CNPD Portugal', 'Comissão Nacional de Proteção de Dados'] },
+  { jurisdiction: 'Spain',          patterns: ['AEPD', 'Agencia Española de Protección de Datos', 'Ley Orgánica de Protección de Datos'] },
+  { jurisdiction: 'Sweden',         patterns: ['IMY', 'Integritetsskyddsmyndigheten', 'dataskyddsförordningen'] },
 
-  // Other
-  { jurisdiction: 'Australia',              patterns: ['Privacy Act 1988', 'Australian Privacy Principles', 'OAIC', 'Office of the Australian Information Commissioner'] },
-  { jurisdiction: 'Brazil',                 patterns: ['LGPD', 'Lei Geral de Proteção de Dados', 'ANPD', 'Autoridade Nacional de Proteção de Dados'] },
-  { jurisdiction: 'Canada',                 patterns: ['PIPEDA', 'Personal Information Protection and Electronic Documents Act', 'Office of the Privacy Commissioner of Canada'] },
+  // Other Europe
+  { jurisdiction: 'Switzerland',    patterns: ['nFADP', 'Federal Act on Data Protection', 'FDPIC', 'Bundesgesetz über den Datenschutz'] },
+  { jurisdiction: 'Turkey',         patterns: ['KVKK', 'Kişisel Verileri Koruma Kanunu', 'Kişisel Verileri Koruma Kurumu'] },
+  { jurisdiction: 'United Kingdom', patterns: ['UK GDPR', 'Information Commissioner', 'ICO Guidance'] },
+
+  // Latin America
+  { jurisdiction: 'Argentina',  patterns: ['AAIP', 'Agencia de Acceso a la Información Pública', 'Ley 25.326'] },
+  { jurisdiction: 'Brazil',     patterns: ['LGPD', 'Lei Geral de Proteção de Dados', 'ANPD', 'Autoridade Nacional de Proteção de Dados'] },
+  { jurisdiction: 'Chile',      patterns: ['Ley 19.628', 'Chilean Data Protection Law', 'CPLT', 'Consejo para la Transparencia'] },
+  { jurisdiction: 'Colombia',   patterns: ['Superintendencia de Industria y Comercio', 'Ley 1581', 'Colombian Data Protection Law'] },
+  { jurisdiction: 'Mexico',     patterns: ['INAI', 'Instituto Nacional de Transparencia', 'LFPDPPP', 'Ley Federal de Protección de Datos Personales'] },
+  { jurisdiction: 'Peru',       patterns: ['Ley 29733', 'Autoridad Nacional de Protección de Datos del Perú', 'Peruvian Data Protection Law'] },
+  { jurisdiction: 'Uruguay',    patterns: ['URCDP', 'Unidad Reguladora y de Control de Datos Personales', 'Ley 18.331'] },
+
+  // Asia-Pacific
+  // Japan/South Korea both have a regulator named "Personal Information Protection
+  // Commission" in English. South Korea's markers use act-name and act-abbreviation
+  // (PIPA / Personal Information Protection Act) which are unique to Korea; Japan
+  // continues to be identified via APPI and its full act name.
+  { jurisdiction: 'Australia',   patterns: ['Privacy Act 1988', 'Australian Privacy Principles', 'OAIC', 'Office of the Australian Information Commissioner'] },
+  { jurisdiction: 'Hong Kong',   patterns: ['PCPD', 'Privacy Commissioner for Personal Data', 'PDPO', 'Personal Data (Privacy) Ordinance'] },
+  { jurisdiction: 'India',       patterns: ['DPDPA', 'Digital Personal Data Protection Act', 'MEITY', 'Data Protection Board of India'] },
+  { jurisdiction: 'Indonesia',   patterns: ['Indonesia PDP Law', 'UU PDP', 'Indonesian Personal Data Protection Law'] },
+  { jurisdiction: 'Japan',       patterns: ['APPI', 'Act on the Protection of Personal Information', 'Personal Information Protection Commission'] },
+  { jurisdiction: 'Malaysia',    patterns: ['Malaysian Personal Data Protection Act', 'PDPA Malaysia', 'JPDP'] },
+  { jurisdiction: 'New Zealand', patterns: ['New Zealand Privacy Act 2020', 'Office of the Privacy Commissioner of New Zealand'] },
+  { jurisdiction: 'Philippines', patterns: ['NPC Philippines', 'National Privacy Commission', 'Data Privacy Act of 2012', 'Republic Act No. 10173'] },
+  { jurisdiction: 'Singapore',   patterns: ['PDPC', 'Personal Data Protection Commission of Singapore', 'Personal Data Protection Act 2012'] },
+  { jurisdiction: 'South Korea', patterns: ['PIPA', 'Personal Information Protection Act', 'PIPC Korea', 'Korean Personal Information Protection Act'] },
+  { jurisdiction: 'Thailand',    patterns: ['Thailand Personal Data Protection Act', 'Thai PDPA', 'PDPA B.E. 2562'] },
+  { jurisdiction: 'Vietnam',     patterns: ['Vietnam Personal Data Protection', 'Decree 13/2023', 'Vietnamese Personal Data Protection Decree'] },
+
+  // Middle East
+  // UAE and Saudi Arabia both use "PDPL" — always qualified ("UAE PDPL" / "Saudi PDPL")
+  // to avoid cross-attribution.
+  { jurisdiction: 'Israel',       patterns: ['Israeli Privacy Protection Authority', 'Privacy Protection Law 5741-1981', 'PPA Israel'] },
+  { jurisdiction: 'Qatar',        patterns: ['Qatar Personal Data Privacy Protection Law', 'Compliance and Data Protection Department', 'Law No. 13 of 2016'] },
+  { jurisdiction: 'Saudi Arabia', patterns: ['SDAIA', 'Saudi Data and Artificial Intelligence Authority', 'Saudi PDPL'] },
+  { jurisdiction: 'UAE',          patterns: ['UAE Data Protection Law', 'UAE PDPL', 'Federal Decree-Law No. 45 of 2021'] },
+
+  // Africa
   { jurisdiction: 'Democratic Republic of Congo', patterns: ['ARPTIC', 'République Démocratique du Congo', 'Digital Code', 'Democratic Republic of the Congo'] },
-  { jurisdiction: 'India',                  patterns: ['DPDPA', 'Digital Personal Data Protection Act', 'MEITY', 'Data Protection Board of India'] },
-  { jurisdiction: 'Japan',                  patterns: ['APPI', 'Act on the Protection of Personal Information', 'Personal Information Protection Commission'] },
-  // Note: "PDPA" intentionally excluded — used generically as "Personal Data Protection Authority" across many jurisdictions
-  { jurisdiction: 'Singapore',              patterns: ['PDPC', 'Personal Data Protection Commission of Singapore', 'Personal Data Protection Act 2012'] },
-  { jurisdiction: 'South Africa',           patterns: ['POPIA', 'Protection of Personal Information Act', 'Information Regulator of South Africa'] },
-  { jurisdiction: 'Switzerland',            patterns: ['nFADP', 'Federal Act on Data Protection', 'FDPIC', 'Bundesgesetz über den Datenschutz'] },
-  { jurisdiction: 'United Kingdom',         patterns: ['UK GDPR', 'Information Commissioner', 'ICO Guidance'] },
+  { jurisdiction: 'Egypt',        patterns: ['Egypt Data Protection Law', 'Law No. 151 of 2020', 'Egyptian Personal Data Protection Law'] },
+  { jurisdiction: 'Kenya',        patterns: ['Kenya Data Protection Act', 'ODPC Kenya', 'Office of the Data Protection Commissioner Kenya'] },
+  { jurisdiction: 'Nigeria',      patterns: ['Nigeria Data Protection Act', 'NDPC', 'Nigeria Data Protection Commission'] },
+  { jurisdiction: 'South Africa', patterns: ['POPIA', 'Protection of Personal Information Act', 'Information Regulator of South Africa'] },
+
+  // North America (non-US)
+  { jurisdiction: 'Canada',       patterns: ['PIPEDA', 'Personal Information Protection and Electronic Documents Act', 'Office of the Privacy Commissioner of Canada'] },
 ];
 
 // Scan first ~3 000 characters (~500 words) — enough to cover the opening section
