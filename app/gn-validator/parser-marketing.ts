@@ -128,20 +128,24 @@ function parseCell(tc: Element, serializer: XMLSerializer): GNCell {
 
 /**
  * A paragraph is a question heading when every visible (non-empty) committed
- * run is bold AND the trimmed text ends in '?'. The bold check uses the same
- * w:rPr/w:b inspection as the parser.ts italic check.
+ * run is bold AND the trimmed text CONTAINS '?' somewhere.
  *
  * Why "every run is bold" not "any run":
  *   In Word, response prose embeds bolded fragments (legal citations, statute
  *   names). The question heading is uniformly bold. The strict predicate avoids
  *   false-positive matches on prose paragraphs with bold fragments.
  *
- * Verified against Philippines INPUT + BT QC: all 41 question paragraphs satisfy
- * this predicate. See scripts/diag-bt-qc.mjs for the ground-truth verification.
+ * Why "contains '?'" not "ends in '?'":
+ *   The Direct Marketing RQF template uses the pattern
+ *     "Question text? (Parenthetical guidance for analysts)"
+ *   The '?' sits mid-string; the paragraph ends with ')' or '.'. Verified
+ *   against the canonical RQF (FINAL Direct Marketing 2026 Template.docx):
+ *   every canonical question contains a '?' but only some end with one.
+ *   See scripts/parse-rqf-template.mjs for the canonical question set.
  */
 function isQuestionHeading(p: Element): boolean {
   const text = extractCommittedText(p).trim();
-  if (!text.endsWith('?')) return false;
+  if (!text.includes('?')) return false;
 
   let hasAnyRun = false;
   let allBold = true;
@@ -172,14 +176,22 @@ function isQuestionHeading(p: Element): boolean {
 }
 
 /**
- * A short section-heading-like paragraph: bold (or bold-italic), not ending in
- * '?', shorter than 80 characters, no sentence punctuation. Used to find the
- * nearest preceding "section heading" string for unnumbered question identifiers.
+ * A short section-heading-like paragraph: bold (or bold-italic), no '?' anywhere,
+ * shorter than 80 characters, no sentence punctuation. Used to find the nearest
+ * preceding "section heading" string for unnumbered question identifiers.
+ *
+ * The '?'-exclusion is critical: with the broader question predicate (contains
+ * '?' anywhere), a "Question? (parenthetical)" paragraph is BOTH bold-and-short.
+ * Without this exclusion the same paragraph would be classified as the section
+ * heading for the next question, producing identifiers like
+ *   "What information must be provided? (e.g.) / Is there an express requirement…"
+ * Excluding any '?'-containing paragraph from section-heading status ensures
+ * each question is detected exactly once, as a question.
  */
 function isSectionHeading(p: Element): boolean {
   const text = extractCommittedText(p).trim();
   if (!text || text.length > 80) return false;
-  if (text.endsWith('?')) return false;
+  if (text.includes('?')) return false;
   // Avoid matching response paragraphs ending in a period or other sentence punctuation
   if (/[.!]$/.test(text)) return false;
 
