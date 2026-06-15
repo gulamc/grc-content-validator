@@ -63,46 +63,11 @@ export async function POST(request: NextRequest) {
     }
 
     const results = await runGNRules(doc);
-
-    // Multi-row citation auto-fix downgrade (Direct Marketing only).
-    // Auto-fixes targeting a citation cell whose source spans multiple <w:tc>
-    // nodes cannot be safely written back yet (see Bug 2 / multi-row write-back
-    // follow-up). Downgrade to flag so the analyst sees the issue and applies
-    // it manually; corrected text travels in the suggestedFix slot.
-    // Gated on the cell having sourceKind === 'multi-row', which is only ever
-    // set by parser-marketing.ts — non-marketing results are unaffected.
-    for (const result of results) {
-      if (result.fixType !== 'auto') continue;
-      if (result.field !== 'citation') continue;
-      const q = doc.questions.find(qq => qq.number === result.questionNumber);
-      if (q?.citation?.sourceKind === 'multi-row') {
-        result.fixType = 'flag';
-        if (result.correctedText && !result.suggestedFix) {
-          result.suggestedFix = result.correctedText;
-        }
-        delete result.correctedText;
-      }
-    }
-
     const outputBuf = await generateDocx(doc, results);
 
     const autoFixed = results.filter(r => r.fixType === 'auto').length;
     const flags = results.filter(r => r.fixType === 'flag').length;
     const aiSuggestions = results.filter(r => r.fixType === 'ai-suggestion').length;
-
-    // Low-confidence parse warning (Direct Marketing only).
-    // Reports the citation-association health rate so the analyst sees when
-    // the parser couldn't reliably attach citation tables to questions. Uses
-    // association, not "citation populated", because legitimately empty
-    // citations ("None.", "Not applicable.") are valid content in many GNs.
-    let parseWarning: string | undefined;
-    if (gnType === 'marketing' && doc.questions.length > 0) {
-      const withCitation = doc.questions.filter(q => q.citation).length;
-      const rate = withCitation / doc.questions.length;
-      if (rate < 0.5) {
-        parseWarning = `Low-confidence parse: ${withCitation} of ${doc.questions.length} questions could not be matched to a citation table. Analyst review of the entire document is recommended — the validator may be missing content.`;
-      }
-    }
 
     return NextResponse.json({
       success: true,
@@ -126,7 +91,6 @@ export async function POST(request: NextRequest) {
         suggestedFix: r.suggestedFix,
       })),
       docxBase64: outputBuf.toString('base64'),
-      ...(parseWarning && { parseWarning }),
     });
   } catch (err) {
     console.error('[GN Validator] Validation error:', err);
