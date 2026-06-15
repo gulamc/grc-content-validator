@@ -11,6 +11,12 @@ export interface GNCell {
   text: string;
   rawXml: string;
   runs?: GNRun[];   // populated by parser; undefined only in synthetic test fixtures
+  // Marketing-only: marks whether the cell content spans a single <w:tc> ('single-row')
+  // or was consolidated from multiple <w:tc> nodes ('multi-row'). The fix-pipeline
+  // uses this to downgrade auto-fixes to flag for 'multi-row' cells (write-back to
+  // multiple cells is not yet supported — see Bug 2 / multi-row write-back follow-up).
+  // Never set on non-marketing cells; downstream consumers gate on its presence.
+  sourceKind?: 'single-row' | 'multi-row';
 }
 
 // One question block: the question paragraph + the three content cells (overview/breach/pia have all three).
