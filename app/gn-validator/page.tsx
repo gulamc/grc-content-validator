@@ -43,6 +43,7 @@ interface ValidationResult {
   summary: Summary;
   findings: Finding[];
   docxBase64: string;
+  parseWarning?: string;
 }
 
 // 'detecting'  — file selected, detection API call in flight
@@ -390,6 +391,14 @@ export default function GNValidatorPage() {
 
             {pageState === 'results' && result && (
               <>
+                {/* Low-confidence parse warning (Direct Marketing) */}
+                {result.parseWarning && (
+                  <div className="bg-amber-50 border border-amber-300 rounded-xl shadow-sm p-4 flex items-start gap-3 mb-6">
+                    <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                    <div className="text-sm text-amber-900">{result.parseWarning}</div>
+                  </div>
+                )}
+
                 {/* Summary card */}
                 <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-6">
                   {/* min-w-0 on left div allows it to shrink so the Download button never overflows */}
