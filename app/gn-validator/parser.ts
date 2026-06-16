@@ -108,6 +108,12 @@ function parseCell(tc: Element, serializer: XMLSerializer): GNCell {
  *   Walk body nodes. Track the current subsection (matched by SECTION_HEADING_RE).
  *   The last non-section paragraph before a table is treated as the question text.
  *   Each table produces one GNQuestion numbered <section>.<sequence>.
+ *
+ * Marketing branch:
+ *   Direct Marketing GNs use a different layout (question heading → prose
+ *   response → citation table). They are routed to parser-marketing.ts via the
+ *   guard clause below. The body of this function — used by Overview, Breach,
+ *   PIA, Employment — is unchanged from before the guard was added.
  */
 export async function parseGNDocument(
   buffer: Buffer,
@@ -115,6 +121,12 @@ export async function parseGNDocument(
   jurisdiction: string,
   fileName: string,
 ): Promise<GNDocument> {
+  if (gnType === 'marketing') {
+    const { parseMarketingDocument } = await import('./parser-marketing');
+    const { document } = await parseMarketingDocument(buffer, jurisdiction, fileName);
+    return document;
+  }
+
   const zip = await (JSZip as unknown as { loadAsync: (b: Buffer) => Promise<JSZip> }).loadAsync(buffer);
 
   const documentFile = zip.file('word/document.xml');
