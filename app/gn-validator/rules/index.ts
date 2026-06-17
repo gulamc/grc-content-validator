@@ -17,9 +17,16 @@ import * as rulesI from './rules-i';
 // When a new rule ID appears in the DB but has no entry here, it is skipped with
 // a console.warn rather than crashing.
 
-type RuleFn = (doc: GNDocument) => Promise<GNValidationResult[]>;
+export type RuleFn = (doc: GNDocument) => Promise<GNValidationResult[]>;
 
-const RULE_FNS: Record<string, RuleFn> = {
+/**
+ * Single source of truth for the rule-ID → implementation mapping. Exported
+ * so verification harnesses can construct the full rule list dynamically
+ * (the production runtime reads from this same map). Hand-listed rule
+ * arrays in verification scripts caused a 38-vs-126 finding-count gap on
+ * the Direct Marketing parser fix; importing this map prevents that drift.
+ */
+export const RULE_FNS: Record<string, RuleFn> = {
   A1: rulesA.ruleA1,
   A2: rulesA.ruleA2,
   A3: rulesA.ruleA3,

@@ -209,8 +209,73 @@ export async function ruleG3(doc: GNDocument): Promise<GNValidationResult[]> {
 
 // ── G4 — Date Format ─────────────────────────────────────────────────────────
 
+/**
+ * Extensible list of prefixes that introduce a regulatory-document identifier
+ * which happens to follow a numeric-date shape (e.g. "Memorandum Circular No.
+ * 03-03-2005" in the Philippines, where the digits are an internal document
+ * number, not a date).
+ *
+ * Text-local check (no jurisdiction coupling) — appears in any document
+ * citing that regulator's instruments, regardless of which GN's jurisdiction
+ * is being validated. Extend this list when other jurisdictions surface their
+ * own conventions (e.g. "Decree No.", "Notification No.", "Bulletin No.").
+ */
+const G4_REGULATORY_DOC_PREFIXES = [
+  'Memorandum Circular',
+  'Circular No.',
+  'MC No.',
+  'Order No.',
+  'Resolution No.',
+];
+
+/**
+ * Numeric-date pattern mirrored from /scorer/rules/dates.ts so we can identify
+ * which substrings the scorer would flag. We do NOT modify the scorer; instead
+ * we pre-redact protected matches in the input cells so the scorer never sees
+ * them. Redaction replaces digits with spaces of EQUAL LENGTH, preserving
+ * paragraph indices and getParaLineRef counts for any unredacted matches.
+ *
+ * UK date format (e.g. "18 February 2014") is never redacted — it always
+ * matches the scorer's UK regex and is always a real format violation worth
+ * flagging.
+ */
+const G4_NUMERIC_DATE_RE = /\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/g;
+
+function redactProtectedNumericDates(text: string): string {
+  let modified = text;
+  for (const m of text.matchAll(G4_NUMERIC_DATE_RE)) {
+    const pos = m.index ?? 0;
+    const window = text.slice(Math.max(0, pos - 30), pos);
+    const isProtected = G4_REGULATORY_DOC_PREFIXES.some(p => window.includes(p));
+    if (isProtected) {
+      modified = modified.slice(0, pos) + ' '.repeat(m[0].length) + modified.slice(pos + m[0].length);
+    }
+  }
+  return modified;
+}
+
+/**
+ * Build a copy of the GNDocument with each cell's text redacted as above.
+ * The scorer reads `text` only; rawXml/runs are untouched, so downstream
+ * output generation is unaffected.
+ */
+function redactGNDocumentForG4(doc: GNDocument): GNDocument {
+  return {
+    ...doc,
+    questions: doc.questions.map(q => ({
+      ...q,
+      response: q.response ? { ...q.response, text: redactProtectedNumericDates(q.response.text) } : undefined,
+      citation: q.citation ? { ...q.citation, text: redactProtectedNumericDates(q.citation.text) } : undefined,
+      persona:  q.persona  ? { ...q.persona,  text: redactProtectedNumericDates(q.persona.text)  } : undefined,
+    })),
+  };
+}
+
 export async function ruleG4(doc: GNDocument): Promise<GNValidationResult[]> {
-  return runScorerRule('dates', 'G4', doc);
+  // Pre-redact regulatory-document identifiers that look like numeric dates.
+  // Strictly subtractive: any match the scorer would have made on the
+  // redacted region is now silenced; all other matches are unchanged.
+  return runScorerRule('dates', 'G4', redactGNDocumentForG4(doc));
 }
 
 // ── G5 — Decimals and Fractions ──────────────────────────────────────────────
@@ -312,6 +377,23 @@ export function applyG11Fix(cellText: string): string {
   return applySectionLowercaseFix(cellText);
 }
 
+// G11 targets GN-internal self-references like "see Section 5 above" — these
+// appear in response prose, never in citation cells. Citation cells are by
+// definition a list of EXTERNAL legal-instrument references ("Section 3 of
+// the Data Privacy Act"), where capitalised "Section" is correct.
+//
+// The underlying scorer rule has a `LEGAL_INSTRUMENT_AFTER_RE` guard meant
+// to skip statute citations, but that guard fails on common compound forms
+// like "Section 3 (c) of the Data Privacy Act", "Section 3.4 and 3.6 of …",
+// or "Section 3(A), <Circular>". Empirically across all 5 sample GNs we
+// have, zero G11 findings exist in response cells and 20 false positives
+// land in Philippines citation cells.
+//
+// Restricting to response cells fixes 100% of the citation-cell false
+// positives without sacrificing any true positive: GN response prose is
+// the only place an analyst would write "see Section N above".
+const G11_FIELDS: Field[] = ['response'];
+
 export async function ruleG11(doc: GNDocument): Promise<GNValidationResult[]> {
   const results: GNValidationResult[] = [];
   const impl = getRule('section-lowercase');
@@ -319,6 +401,7 @@ export async function ruleG11(doc: GNDocument): Promise<GNValidationResult[]> {
 
   for (const question of doc.questions) {
     for (const [field, cell] of responseCitationCells(question)) {
+      if (!G11_FIELDS.includes(field)) continue;
       const result = await impl({ text: cell.text, params: {} });
       if (!result.issues.length) continue;
 
