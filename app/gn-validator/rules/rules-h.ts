@@ -155,6 +155,12 @@ export async function ruleH5(doc: GNDocument): Promise<GNValidationResult[]> {
       const abbr = m[1];
       if (H5_EXCEPTIONS.has(abbr)) continue;
       if (H5_PLAIN_WORDS.has(abbr)) continue;
+      // Roman-numeral chapter/title designators ("Chapter VIII", "Title III",
+      // "Part I", "Section VII") — universal legal-citation convention, not
+      // abbreviations requiring introduction. Predicate is conservative: only
+      // I/V/X (the small Roman numerals), so real abbreviations starting with
+      // those letters (e.g. CISO, IMF) are still flagged correctly.
+      if (/^[IVX]+$/.test(abbr)) continue;
       if (alreadyFlagged.has(abbr)) continue;
 
       // Skip if this match is in intro form: preceded by "(" and followed by ")"
