@@ -561,7 +561,9 @@ function FindingsGroup({
               </span>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm font-medium text-slate-800">Q{f.questionNumber}</span>
+                  <span className="text-sm font-medium text-slate-800">
+                    {/^\d+(\.\d+)+$/.test(f.questionNumber) ? `Q${f.questionNumber}` : f.questionNumber}
+                  </span>
                   <span className="text-xs text-slate-400">{fieldLabel(f.field)}</span>
                 </div>
                 <p className="text-sm text-slate-600 mt-0.5">{f.message}</p>
