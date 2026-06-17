@@ -7,6 +7,13 @@ node_modules/
 dist/
 build/
 
-# Local dev/test artifacts (not for repo or deployment)
-scripts/
+# Local dev/test artifacts (not for repo or deployment).
+# Exception: production-grade verification harness — imports the real
+# RULE_FNS map from app/gn-validator/rules/index.ts and runs the full
+# rule set against the committed sample fixtures. Required for proving
+# byte-identical regression behaviour before any deploy.
+scripts/*
+!scripts/verify-full-prod-rules.mjs
+!scripts/snapshot-full.mjs
+!scripts/parse-rqf-template.mjs
 tsconfig.tsbuildinfo
