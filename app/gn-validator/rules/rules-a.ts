@@ -17,12 +17,22 @@ export async function ruleA1(doc: GNDocument): Promise<GNValidationResult[]> {
   for (const question of doc.questions) {
     for (const field of expected) {
       if (!question[field]) {
+        // Direct Marketing parser now models multi-row citation tables
+        // correctly; an absent citation cell means no citation table was
+        // associated with the question heading, not a structural row
+        // defect. The new wording states the editorial action plainly.
+        // Other fields (response, persona) on Overview/Breach/PIA/Employment
+        // keep the structural-template message because their absence IS
+        // a structural defect in those table-formatted GNs.
+        const message = field === 'citation'
+          ? `No citation found for this question. Add the relevant authority/citation table, or use "Not applicable." if no authority applies.`
+          : `Missing ${field} cell — ${doc.type} GN expects ${expected.join(', ')} rows per question.`;
         results.push({
           ruleId: 'A1',
           questionNumber: question.number,
           field,
           severity: 'error',
-          message: `Missing ${field} cell — ${doc.type} GN expects ${expected.join(', ')} rows per question.`,
+          message,
           fixType: 'flag',
         });
       }
