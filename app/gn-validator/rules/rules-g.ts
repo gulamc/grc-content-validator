@@ -3,6 +3,7 @@ import { getRule } from '@/lib/rule-registry';
 import { UK_US_SPELLINGS } from '@/scorer/rules/tone-style';
 import { findLatinTerms } from '@/scorer/rules/latin-italics';
 import { applySectionLowercaseFix } from '@/scorer/rules/section-lowercase';
+import { JURISDICTION_GROUPS } from '../utils/jurisdictions';
 
 // Ensure all scorer rules are registered before any getRule() call.
 // This import is a side-effect — it populates the registry.
@@ -271,11 +272,44 @@ function redactGNDocumentForG4(doc: GNDocument): GNDocument {
   };
 }
 
+/**
+ * US-state jurisdictions where DataGuidance house style requires US date
+ * format ("Month dd, yyyy"). For non-US jurisdictions the "dd Month yyyy"
+ * convention is locally correct and must not be flagged.
+ *
+ * Mirrors the US_STATES gate used in [rules-b.ts] for the §-conversion check.
+ */
+const G4_US_STATES = new Set(JURISDICTION_GROUPS[0].jurisdictions);
+
+/**
+ * String token used to identify UK-format issues coming back from the scorer.
+ *
+ * BRITTLE COUPLING — the scorer's issue strings (defined in
+ * /scorer/rules/dates.ts) have no structured per-issue type field; we filter
+ * by the literal "UK date format" prefix in the message. If the scorer's
+ * message wording is ever changed (e.g. localised, reworded, or the rule
+ * is refactored to emit per-issue codes), this gate silently stops matching
+ * and the US-only check will leak back onto non-US documents. If you
+ * touch the scorer's dates rule, also touch this constant and confirm the
+ * G4 jurisdiction gate still suppresses UK-format issues on Belgium and
+ * Philippines fixtures.
+ */
+const G4_UK_FORMAT_MESSAGE_TOKEN = 'UK date format';
+
 export async function ruleG4(doc: GNDocument): Promise<GNValidationResult[]> {
   // Pre-redact regulatory-document identifiers that look like numeric dates.
   // Strictly subtractive: any match the scorer would have made on the
   // redacted region is now silenced; all other matches are unchanged.
-  return runScorerRule('dates', 'G4', redactGNDocumentForG4(doc));
+  const results = await runScorerRule('dates', 'G4', redactGNDocumentForG4(doc));
+
+  // US-state house style applies → no further filtering.
+  if (G4_US_STATES.has(doc.jurisdiction)) return results;
+
+  // Non-US jurisdiction → drop the UK→US format-conversion sub-issues.
+  // The numeric-date sub-issues (with the regulatory-prefix redaction
+  // already applied above) remain universal — date strings like "05/25/18"
+  // are ambiguous in any jurisdiction and the spell-out requirement holds.
+  return results.filter(r => !r.message.includes(G4_UK_FORMAT_MESSAGE_TOKEN));
 }
 
 // ── G5 — Decimals and Fractions ──────────────────────────────────────────────
