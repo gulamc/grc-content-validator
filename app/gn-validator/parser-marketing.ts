@@ -45,7 +45,7 @@
  */
 import JSZip from 'jszip';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
-import type { GNCell, GNRun, GNQuestion, GNDocument } from './types';
+import type { GNCell, GNRun, GNQuestion, GNDocument, ParseDiagnostics } from './types';
 import { NumberingResolver, tryResolve } from './utils/word-numbering';
 
 const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
@@ -60,6 +60,12 @@ const LITERAL_QUESTION_LABEL_RE = /^(\d+\.\d+\.\d+)\.?\s+/;
 // Marketing-only citation labels: accept "Citation" or "Citations" header
 // (anchored on whitespace+end, so it doesn't match "Citation list" etc.).
 const LABEL_CITATION_MARKETING = /^citations?\s*$/i;
+
+// Broader pattern used ONLY to detect possible citation tables that the
+// strict regex above would skip. If a table's row 0 col 0 matches the
+// broad pattern but NOT the strict pattern, the table is silently
+// skipped today — we surface it via the B2 signal.
+const LABEL_CITATION_LIKE = /^(citations?|sources?|references?|authorit(?:y|ies)|legal\s+bas[ei]s|laws?|regulations?)/i;
 
 // ── DOM utilities (duplicated from parser.ts to keep the legacy file untouched) ──
 
@@ -351,6 +357,7 @@ function parseTableDrivenLegacy(
   jurisdiction: string,
   fileName: string,
   buffer: Buffer,
+  diagnosticsBase: Omit<ParseDiagnostics, 'orphanedCitationTables' | 'unrecognisedCitationLabels'>,
 ): GNDocument {
   const questions: GNQuestion[] = [];
   let currentSection = '';
@@ -395,7 +402,44 @@ function parseTableDrivenLegacy(
     }
   }
 
-  return { type: 'marketing', jurisdiction, isEU: false, fileName, questions, rawBuffer: buffer };
+  // Legacy branch B1/B2 signals. The legacy algorithm silently skips a
+  // table when there's no current section heading or no pending question
+  // text — those tables become orphans (their citation content is invisible
+  // to rules). Re-count for the diagnostic by walking again with the same
+  // bookkeeping but only counting tables.
+  let totalTbls = 0;
+  let droppedTbls = 0;
+  let cs = '';
+  let pqt = '';
+  for (let i = 0; i < body.childNodes.length; i++) {
+    const n = body.childNodes[i] as Element;
+    if (n.localName === 'p') {
+      const t = extractCommittedText(n).trim();
+      if (!t) continue;
+      const m = t.match(SECTION_HEADING_RE);
+      if (m) { cs = m[1]; pqt = ''; } else pqt = t;
+    } else if (n.localName === 'tbl') {
+      totalTbls++;
+      if (!cs || !pqt) droppedTbls++;
+      pqt = '';
+    }
+  }
+  const labelScan = scanCitationLabels(body);
+  const parseDiagnostics: ParseDiagnostics = {
+    ...diagnosticsBase,
+    orphanedCitationTables: droppedTbls,
+    unrecognisedCitationLabels: labelScan.unrecognised,
+  };
+
+  return {
+    type: 'marketing',
+    jurisdiction,
+    isEU: false,
+    fileName,
+    questions,
+    rawBuffer: buffer,
+    parseDiagnostics,
+  };
 }
 
 // ── Heading-driven branch (Philippines and similar) ──────────────────────────
@@ -407,6 +451,34 @@ function parseTableDrivenLegacy(
  * that have no preceding question (they belong to preamble / "Applicable
  * laws" lists which are not validated as questions).
  */
+/**
+ * Walk every <w:tbl> in body and bucket by whether its row-0-col-0 label
+ * matches the strict `LABEL_CITATION_MARKETING` regex or only the broader
+ * `LABEL_CITATION_LIKE` pattern. The "broad but not strict" set is the B2
+ * signal — these are real citation tables (per the broader pattern) that
+ * the strict parser would silently skip.
+ */
+function scanCitationLabels(body: Element): { strictCount: number; unrecognised: string[] } {
+  let strictCount = 0;
+  const unrecognised = new Set<string>();
+  for (let i = 0; i < body.childNodes.length; i++) {
+    const node = body.childNodes[i] as Element;
+    if (node.localName !== 'tbl') continue;
+    const rows = getDirectChildren(node, 'tr');
+    if (rows.length === 0) continue;
+    const r0c = getDirectChildren(rows[0], 'tc');
+    if (r0c.length < 2) continue;
+    const label = extractCommittedText(r0c[0]).trim();
+    if (LABEL_CITATION_MARKETING.test(label)) {
+      strictCount++;
+    } else if (LABEL_CITATION_LIKE.test(label)) {
+      // Real citation-shaped table the strict regex misses.
+      unrecognised.add(label.slice(0, 80));
+    }
+  }
+  return { strictCount, unrecognised: [...unrecognised] };
+}
+
 function parseHeadingDriven(
   body: Element,
   serializer: XMLSerializer,
@@ -414,6 +486,7 @@ function parseHeadingDriven(
   fileName: string,
   buffer: Buffer,
   numberingXml: string | null,
+  diagnosticsBase: Omit<ParseDiagnostics, 'orphanedCitationTables' | 'unrecognisedCitationLabels'>,
 ): GNDocument {
   // Optional Word auto-numbering resolver. When present, `tryResolve` is
   // called on EVERY numbered paragraph in body order so the level counters
@@ -466,8 +539,11 @@ function parseHeadingDriven(
 
   // Pass 2: walk events. For each question, find the next table before the
   // next question. Use the most recent section heading as the prefix.
+  // Also track which table events get attached to a question — the
+  // un-attached set is the B1 orphan-citation-tables signal.
   const questions: GNQuestion[] = [];
   let currentSectionHeading = '';
+  const attachedTableEventIdxs = new Set<number>();
 
   for (let i = 0; i < events.length; i++) {
     const ev = events[i];
@@ -488,6 +564,7 @@ function parseHeadingDriven(
         if (cit) {
           citation = { ...cit.cell, sourceKind: cit.sourceKind, bodyIndex: e2.bodyIndex };
         }
+        attachedTableEventIdxs.add(j);
         break;
       }
     }
@@ -533,7 +610,25 @@ function parseHeadingDriven(
     });
   }
 
-  return { type: 'marketing', jurisdiction, isEU: false, fileName, questions, rawBuffer: buffer };
+  // Compute B1 + B2 signals for the parse diagnostics.
+  const totalTableEvents = events.filter(e => e.kind === 'table').length;
+  const orphanedCitationTables = totalTableEvents - attachedTableEventIdxs.size;
+  const labelScan = scanCitationLabels(body);
+  const parseDiagnostics: ParseDiagnostics = {
+    ...diagnosticsBase,
+    orphanedCitationTables,
+    unrecognisedCitationLabels: labelScan.unrecognised,
+  };
+
+  return {
+    type: 'marketing',
+    jurisdiction,
+    isEU: false,
+    fileName,
+    questions,
+    rawBuffer: buffer,
+    parseDiagnostics,
+  };
 }
 
 // ── Public entry ─────────────────────────────────────────────────────────────
@@ -570,9 +665,14 @@ export async function parseMarketingDocument(
   const body = bodyElements[0];
 
   const scan = scanBodyStructure(body);
+  const diagnosticsBase: Omit<ParseDiagnostics, 'orphanedCitationTables' | 'unrecognisedCitationLabels'> = {
+    dispatchPath: scan.cleanStructural ? 'legacy-clean' : 'heading-driven',
+    totalTables: scan.totalTables,
+    tablesUnderSection: scan.tablesUnderSection,
+  };
   const document = scan.cleanStructural
-    ? parseTableDrivenLegacy(body, serializer, jurisdiction, fileName, buffer)
-    : parseHeadingDriven(body, serializer, jurisdiction, fileName, buffer, numberingXml);
+    ? parseTableDrivenLegacy(body, serializer, jurisdiction, fileName, buffer, diagnosticsBase)
+    : parseHeadingDriven(body, serializer, jurisdiction, fileName, buffer, numberingXml, diagnosticsBase);
 
   return { document, scan };
 }
