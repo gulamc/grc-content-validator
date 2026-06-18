@@ -86,15 +86,75 @@ export async function generateDocx(
   }
 
   // ── 6. Comments for flag / ai-suggestion results ──────────────────────────
+  // Primary: anchor on the cell identified by cellIdIndex (the normal case
+  // for findings on populated cells).
+  //
+  // Fallback: when no cell mapping exists (A1 fires on questions whose
+  // citation table doesn't exist in the document at all), anchor on the
+  // question heading paragraph instead. Heading-driven parser-marketing
+  // records the heading paragraph's body-child-index on `headingBodyIndex`;
+  // we look up the corresponding <w:p> in docEl's body. Without this
+  // fallback, the 10–11 A1 findings on Philippines would silently drop —
+  // the analyst would see them on screen but not in the docx.
+  const bodyEl = docEl.getElementsByTagNameNS(
+    'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
+    'body',
+  )[0];
+  const bodyChildPs: Element[] = [];
+  if (bodyEl) {
+    for (let i = 0; i < bodyEl.childNodes.length; i++) {
+      bodyChildPs[i] = bodyEl.childNodes[i] as Element;
+    }
+  }
   const commentTasks = results
     .filter(r => r.fixType !== 'auto')
     .map(r => {
+      // Find the SPECIFIC question this finding came from. When question
+      // numbers collide (real artifact: Word numbering schemes can produce
+      // the same X.Y.Z for different questions in the same doc), prefer
+      // the question whose field-state matches the rule's firing condition:
+      //   - A1 fires when r.field is ABSENT  → prefer the question without that field
+      //   - other rules fire when r.field is PRESENT → prefer the question with it
+      // This is what makes the comment anchor on the right paragraph/cell
+      // when two questions share a number.
+      const expectsAbsent = r.ruleId === 'A1';
+      // r.field can be 'document' (no specific cell); restrict to fields that
+      // exist on GNQuestion before doing the field-state disambiguation.
+      const cellField: 'response' | 'citation' | 'persona' | null =
+        r.field === 'response' || r.field === 'citation' || r.field === 'persona' ? r.field : null;
+      const q =
+        (cellField
+          ? doc.questions.find(qq => {
+              if (qq.number !== r.questionNumber) return false;
+              return expectsAbsent ? !qq[cellField] : !!qq[cellField];
+            })
+          : undefined) ?? doc.questions.find(qq => qq.number === r.questionNumber);
+      if (!q) return null;
+
+      // A1 (and any rule firing on an absent field) always anchors on the
+      // question heading paragraph — there is no cell to anchor in.
+      if (expectsAbsent) {
+        const headingIdx = q.headingBodyIndex;
+        if (headingIdx === undefined) return null;
+        const headingP = bodyChildPs[headingIdx];
+        if (headingP?.localName !== 'p') return null;
+        return { result: r, pNode: headingP };
+      }
+
+      // Other rules: cell anchor via cellIdIndex, with paragraph fallback
+      // if the cell index lookup misses for any reason.
       const cellKey = `${r.questionNumber}:${r.field}`;
       const cellId = cellIdIndex.get(cellKey);
-      if (!cellId) return null;
-      const entry = cellMap.get(cellId);
-      if (!entry) return null;
-      return { result: r, entry };
+      if (cellId) {
+        const entry = cellMap.get(cellId);
+        if (entry) return { result: r, entry };
+      }
+      const headingIdx = q.headingBodyIndex;
+      if (headingIdx !== undefined) {
+        const headingP = bodyChildPs[headingIdx];
+        if (headingP?.localName === 'p') return { result: r, pNode: headingP };
+      }
+      return null;
     })
     .filter((t): t is NonNullable<typeof t> => t !== null);
 

@@ -35,16 +35,26 @@ function makeCommentEl(doc: Document, id: number, text: string): Element {
   return comment;
 }
 
-/** Insert comment anchor runs into a <w:tc> paragraph. */
+/**
+ * Insert comment anchor runs around content.
+ *
+ * The anchor target is either:
+ *   - a <w:tc> — anchor on the first <w:p> inside the cell (existing behaviour),
+ *   - a <w:p>  — anchor on the paragraph directly. Used by the heading-driven
+ *               parser-marketing path for A1 findings where the question has
+ *               no citation table at all and the comment must anchor on the
+ *               question heading paragraph instead of a non-existent cell.
+ */
 function anchorComment(
-  tc: Element,
+  anchor: Element,
   commentId: number,
   matchText: string | undefined,
   ownerDoc: Document,
   nextId: () => number,
 ): void {
-  const pEls = getChildren(tc, 'p');
-  const p = pEls[0];
+  const p = anchor.localName === 'p'
+    ? anchor
+    : getChildren(anchor, 'p')[0];
   if (!p) return;
 
   const rangeStartId = nextId();
@@ -114,10 +124,21 @@ function anchorAtCellLevel(
   p.appendChild(refRun);
 }
 
-export interface CommentTask {
-  result: GNValidationResult;
-  entry: CellEntry;
-}
+/**
+ * A comment-anchoring task. Two shapes:
+ *   - { entry } — anchor on a cell (the normal case for findings on existing
+ *     cells). The first <w:p> of the cell becomes the wrap target.
+ *   - { pNode } — anchor on a paragraph directly. Used by the heading-driven
+ *     parser-marketing path when a finding's field has no cell at all (e.g.
+ *     A1 on questions whose citation table is absent). The paragraph IS the
+ *     wrap target.
+ *
+ * Discriminated by which key is present. Both forms produce the same comment
+ * content; only the OOXML wrap location differs.
+ */
+export type CommentTask =
+  | { result: GNValidationResult; entry: CellEntry; pNode?: undefined }
+  | { result: GNValidationResult; entry?: undefined; pNode: Element };
 
 /**
  * Write all comments (flag + ai-suggestion results) into the ZIP.
@@ -153,13 +174,17 @@ export async function injectComments(
 
   let commentId = existingCommentIds.size > 0 ? Math.max(...existingCommentIds) + 1 : 1;
 
-  for (const { result, entry } of commentTasks) {
+  for (const task of commentTasks) {
+    const { result } = task;
     const text = formatComment(result);
     const commentEl = makeCommentEl(commentsDoc, commentId, text);
     commentsRoot.appendChild(commentEl);
 
-    // Anchor the comment in the document body.
-    anchorComment(entry.tcNode, commentId, result.matchText, ownerDoc, nextId);
+    // Anchor the comment in the document body. Two anchor shapes:
+    //   - entry  → cell-level (wrap first <w:p> in the <w:tc>)
+    //   - pNode  → paragraph-level (wrap the <w:p> directly)
+    const anchor = task.entry ? task.entry.tcNode : task.pNode;
+    anchorComment(anchor, commentId, result.matchText, ownerDoc, nextId);
 
     commentId++;
   }

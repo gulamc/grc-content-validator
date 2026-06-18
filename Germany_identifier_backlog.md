@@ -74,18 +74,43 @@ preserved deliberately as part of the Philippines fix.
   rather than a wrong-cell finding. Risk of acting on this in the wrong
   PR > risk of one more release cycle with fabricated identifiers.
 
-## Recommended fix
+## Recommended fix (revised — Word auto-numbering resolver now available)
 
-Apply the same identifier strategy used in `parseHeadingDriven` for
-Philippines:
+A shared, reusable Word auto-numbering resolver was added in the Philippines
+output-blank fix:
+- `app/gn-validator/utils/word-numbering.ts` (NumberingResolver class)
+- Used by `parser-marketing.ts` heading-driven branch
 
-- **Literal label present** (heading starts with `\d+\.\d+\.\d+`) → use it.
-- **No label** → use `"<nearest preceding section heading> / <question text>"`.
+Germany's question paragraphs DO carry `<w:numPr>` auto-numbering (verified
+empirically: 67 paragraphs with numPr in the Germany sample). The resolver
+can therefore produce real document numbers for Germany the same way it
+does for Philippines — no rebuild needed, just wiring.
 
-Mechanically: switch Germany's branch in `parser-marketing.ts` from
-`parseTableDrivenLegacy` to `parseHeadingDriven`. Both functions already
-exist; the dispatch in `parseMarketingDocument` would broaden to use the
-heading-driven path for `cleanStructural` docs too.
+Two ways to adopt:
+
+**Option A — Switch Germany to the heading-driven branch.** Drop the
+`cleanStructural` dispatch threshold so all marketing docs use
+`parseHeadingDriven` + the resolver. Risk: heading-driven semantics differ
+from legacy in edge cases (e.g. tables without preceding `?`-question
+headings — Germany has 33 such tables that today become questions under
+the legacy path but would be dropped by heading-driven). Requires
+analyst-comms because the identifiers and question count would change.
+
+**Option B — Add resolver to `parseTableDrivenLegacy`.** Keep the
+legacy walk and identifier semantics (preserves Germany's question count
+of 74 byte-identical) but consult the resolver for each question heading
+to replace the fabricated `section.sequence` number with the resolved
+auto-number. This is the smaller change and the recommended path.
+
+Mechanically for Option B:
+1. Pass `numberingXml` into `parseTableDrivenLegacy` (currently it's only
+   passed to `parseHeadingDriven`).
+2. Build a `NumberingResolver` and walk every body paragraph in order
+   calling `tryResolve` so counters stay in sync.
+3. When the legacy algorithm captures `pendingQuestionText` from a
+   paragraph, also capture its resolved number (if any).
+4. When a table follows, use the resolved number instead of
+   `${currentSection}.${sectionCounts[currentSection]}` if present.
 
 Validation that this is safe:
 - Germany has 41 `?`-ending bold paragraphs but the parser currently emits
@@ -100,21 +125,31 @@ swap. Likely needed: extend the heading-driven walk to attach more than one
 table per question heading (the same heading governs N consecutive tables
 until the next heading).
 
-## Required pre-work
+## Required pre-work (Option B — recommended)
 
-1. Characterise Germany's 33 "extra" tables (those without a preceding `?`
-   heading). Are they multiple citation tables per question? Tables under a
-   non-question heading? Sub-tables of a larger answer block?
-2. Decide the question grouping rule: one heading → N tables.
-3. Draft an analyst communication: "Direct Marketing identifiers will
-   change in release X — here is the mapping from old to new."
-4. Spot-check the new identifiers against the original German document for
-   correctness.
-5. Cross-check finding cell-mapping still lands on the right cell when
-   question identity changes — the cell-map index uses positional matching
-   (`buildCellIdIndex` in `cell-map.ts`), so order matters more than
-   identifier matters; but the index keys do incorporate identifier strings,
-   so identifier collisions or missing keys could break write-back.
+1. Confirm Germany's `numbering.xml` resolves cleanly via `NumberingResolver`
+   for all 74 question paragraphs. The resolver throws on unsupported
+   formats (lvlOverride, non-decimal numFmts, etc.); if Germany hits any
+   of these, the resolver needs extending OR the throw fallback hits the
+   text identifier — verify before shipping.
+2. Spot-check the resolved numbers against what Word renders. If Word
+   shows different numbers than the resolver produces, the resolver has
+   a bug (and Philippines may be affected too).
+3. Decide whether the swap is silent (no analyst comms needed) — if the
+   resolved numbers match the current fabricated numbers exactly for
+   every Germany question, the change is invisible. If any differ, an
+   analyst-facing comms message is required because finding identifiers
+   shift.
+
+## Required pre-work (Option A — if Germany count would be wrong)
+
+The 33 "extra" Germany tables (those without a preceding `?`-question
+heading) are likely sub-tables, continuation tables, or tables under
+unnumbered subsections. Characterise them before switching dispatch.
+If they're multi-table-per-question, parser-marketing's heading-driven
+walk already attaches the FIRST table per question — additional tables
+would be silently dropped (the same class of bug we fixed for
+Philippines). Need to handle.
 
 ## When this should ship
 

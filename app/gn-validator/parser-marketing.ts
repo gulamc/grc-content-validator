@@ -46,6 +46,7 @@
 import JSZip from 'jszip';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import type { GNCell, GNRun, GNQuestion, GNDocument } from './types';
+import { NumberingResolver, tryResolve } from './utils/word-numbering';
 
 const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 
@@ -412,16 +413,42 @@ function parseHeadingDriven(
   jurisdiction: string,
   fileName: string,
   buffer: Buffer,
+  numberingXml: string | null,
 ): GNDocument {
-  // Pass 1: collect headings + citation tables in body order.
-  interface Event { kind: 'section' | 'question' | 'table'; text?: string; node?: Element; }
+  // Optional Word auto-numbering resolver. When present, `tryResolve` is
+  // called on EVERY numbered paragraph in body order so the level counters
+  // stay in sync; question paragraphs get their resolved number used as the
+  // identifier. Bullet items in response prose use numFmt="bullet" which is
+  // unsupported by the resolver and is correctly silenced via tryResolve
+  // returning null — they don't poison the question-paragraph counters
+  // because question paragraphs are on a different numId. See
+  // utils/word-numbering.ts for the resolver contract.
+  const resolver = numberingXml ? new NumberingResolver(numberingXml) : null;
+
+  // Pass 1: collect headings + citation tables in body order. Track bodyIndex
+  // for each table event — the index of the <w:tbl> in body.childNodes. The
+  // output cell-map consumes this to locate the exact cell to anchor diffs/
+  // comments against, bypassing its section-heading filter.
+  interface Event {
+    kind: 'section' | 'question' | 'table';
+    text?: string;
+    node?: Element;
+    bodyIndex?: number;
+    resolvedNumber?: string | null;
+  }
   const events: Event[] = [];
 
   for (let i = 0; i < body.childNodes.length; i++) {
     const node = body.childNodes[i] as Element;
     if (node.localName === 'p') {
+      // Always call tryResolve on numbered paragraphs so the resolver's
+      // per-level counters advance in document order, including for
+      // numbered paragraphs that aren't questions (e.g. section labels
+      // like "Law and regulations" at ilvl=1). Failing to do this would
+      // make question paragraphs at ilvl=2 resolve to the wrong number.
+      const resolvedNumber = resolver ? tryResolve(resolver, node) : null;
       if (isQuestionHeading(node)) {
-        events.push({ kind: 'question', text: extractCommittedText(node).trim(), node });
+        events.push({ kind: 'question', text: extractCommittedText(node).trim(), node, bodyIndex: i, resolvedNumber });
       } else if (isSectionHeading(node)) {
         events.push({ kind: 'section', text: extractCommittedText(node).trim() });
       }
@@ -433,7 +460,7 @@ function parseHeadingDriven(
       if (row0Cells.length < 2) continue;
       const row0Label = extractCommittedText(row0Cells[0]).trim();
       if (!LABEL_CITATION_MARKETING.test(row0Label)) continue;
-      events.push({ kind: 'table', node });
+      events.push({ kind: 'table', node, bodyIndex: i });
     }
   }
 
@@ -459,26 +486,38 @@ function parseHeadingDriven(
       if (e2.kind === 'table' && e2.node) {
         const cit = readCitationTable(e2.node, serializer);
         if (cit) {
-          citation = { ...cit.cell, sourceKind: cit.sourceKind };
+          citation = { ...cit.cell, sourceKind: cit.sourceKind, bodyIndex: e2.bodyIndex };
         }
         break;
       }
     }
 
-    // Identifier: literal label if present, else "Section / Question text".
-    const literalMatch = questionText.match(LITERAL_QUESTION_LABEL_RE);
+    // Identifier strategy (priority order):
+    //   1. Word auto-number resolved from <w:numPr> (e.g. "1.1.2") — preferred
+    //      because the analyst sees this exact number in the document and can
+    //      Ctrl-F it to locate the question.
+    //   2. Literal "X.Y.Z" prefix at start of question text — fallback for
+    //      documents that hard-code the number in text instead of via numPr.
+    //   3. "Section heading / Question text" — last-resort fallback for
+    //      paragraphs without numbering and without a literal prefix.
     let number: string;
     let section: string;
-    if (literalMatch) {
-      number = literalMatch[1];
-      // Use the X.Y prefix as the section value (consistent with parser.ts).
+    if (ev.resolvedNumber) {
+      number = ev.resolvedNumber;
       const xy = number.match(/^(\d+\.\d+)/);
       section = xy ? xy[1] : '';
     } else {
-      number = currentSectionHeading
-        ? `${currentSectionHeading} / ${questionText}`
-        : questionText;
-      section = ''; // Not numeric — no rule consumes this for marketing.
+      const literalMatch = questionText.match(LITERAL_QUESTION_LABEL_RE);
+      if (literalMatch) {
+        number = literalMatch[1];
+        const xy = number.match(/^(\d+\.\d+)/);
+        section = xy ? xy[1] : '';
+      } else {
+        number = currentSectionHeading
+          ? `${currentSectionHeading} / ${questionText}`
+          : questionText;
+        section = ''; // Not numeric — no rule consumes this for marketing.
+      }
     }
 
     questions.push({
@@ -486,6 +525,11 @@ function parseHeadingDriven(
       section,
       questionText,
       citation,
+      // headingBodyIndex anchors the question to its heading <w:p> position.
+      // The output pipeline uses this when a finding's field has no cell
+      // (e.g. A1 firing on a question with no citation table — the comment
+      // anchors on the heading paragraph itself).
+      headingBodyIndex: ev.bodyIndex,
     });
   }
 
@@ -509,6 +553,14 @@ export async function parseMarketingDocument(
   if (!documentFile) throw new Error('word/document.xml not found in document');
   const xml = await documentFile.async('string');
 
+  // word/numbering.xml is optional. Direct Marketing docs (e.g. Philippines)
+  // use Word auto-numbering for question paragraphs; reading it lets the
+  // heading-driven parser resolve real document numbers like "1.1.2".
+  // Docs without numbering.xml (or whose question headings don't use it)
+  // fall back to the literal-label / text-prefix identifier path.
+  const numberingFile = zip.file('word/numbering.xml');
+  const numberingXml = numberingFile ? await numberingFile.async('string') : null;
+
   const domParser = new DOMParser();
   const xmlDoc = domParser.parseFromString(xml, 'text/xml') as unknown as Document;
   const serializer = new XMLSerializer();
@@ -520,7 +572,7 @@ export async function parseMarketingDocument(
   const scan = scanBodyStructure(body);
   const document = scan.cleanStructural
     ? parseTableDrivenLegacy(body, serializer, jurisdiction, fileName, buffer)
-    : parseHeadingDriven(body, serializer, jurisdiction, fileName, buffer);
+    : parseHeadingDriven(body, serializer, jurisdiction, fileName, buffer, numberingXml);
 
   return { document, scan };
 }
