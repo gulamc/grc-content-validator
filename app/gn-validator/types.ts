@@ -17,6 +17,15 @@ export interface GNCell {
   // multiple cells is not yet supported — see Bug 2 / multi-row write-back follow-up).
   // Never set on non-marketing cells; downstream consumers gate on its presence.
   sourceKind?: 'single-row' | 'multi-row';
+  // Marketing-heading-driven-only: body-child index of the <w:tbl> this cell came from.
+  // The output cell-map normally identifies citation cells by walking the document and
+  // matching tables that sit under a literal `\d+\.\d+` section heading + positional
+  // match. That filter rejects tables under Word-auto-numbered headings (Philippines),
+  // so the heading-driven parser explicitly records the source table index here. When
+  // set, buildCellIdIndex bypasses its filter+positional logic and resolves the cell
+  // by body index directly. Never set on the legacy table-driven path or on response/
+  // persona cells; presence gates the bypass.
+  bodyIndex?: number;
 }
 
 // One question block: the question paragraph + the three content cells (overview/breach/pia have all three).
@@ -27,6 +36,13 @@ export interface GNQuestion {
   response?: GNCell;
   citation?: GNCell;
   persona?: GNCell;     // only overview, breach, pia
+  // Marketing-heading-driven-only: body-child index of the question heading
+  // <w:p>. Used by the output pipeline as a fallback anchor when a finding's
+  // field has no matching cell (A1 fires on questions whose citation table is
+  // absent — by definition there's no cell to comment in, so the comment
+  // anchors on the question heading paragraph instead). Never set on the
+  // legacy table-driven path.
+  headingBodyIndex?: number;
 }
 
 export interface GNDocument {

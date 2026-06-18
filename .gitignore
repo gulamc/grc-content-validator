@@ -14,6 +14,7 @@ build/
 # byte-identical regression behaviour before any deploy.
 scripts/*
 !scripts/verify-full-prod-rules.mjs
+!scripts/verify-deliverable.mjs
 !scripts/snapshot-full.mjs
 !scripts/parse-rqf-template.mjs
 tsconfig.tsbuildinfo
