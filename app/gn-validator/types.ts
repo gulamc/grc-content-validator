@@ -45,6 +45,38 @@ export interface GNQuestion {
   headingBodyIndex?: number;
 }
 
+/**
+ * Marketing-only diagnostics surfaced from parseMarketingDocument.
+ *
+ * These convert silent forks and silent drops in the parser into visible
+ * signals the validate route can use to construct a low-confidence parse
+ * warning. The principle: when the parser is operating on a structure it
+ * was not built against, the analyst sees it instead of silently getting
+ * partial output.
+ */
+export interface ParseDiagnostics {
+  // Which dispatch path was taken. `legacy-clean` = `parseTableDrivenLegacy`
+  // (the 95%+ cleanStructural branch, used by Germany); `heading-driven` =
+  // `parseHeadingDriven` (used by Philippines). Visible to the analyst so
+  // the path is never silent.
+  dispatchPath: 'legacy-clean' | 'heading-driven';
+  // Inputs to the dispatch decision. A ratio in 0.70–0.98 is "borderline" —
+  // the dispatch is low-confidence and the analyst should be told.
+  totalTables: number;
+  tablesUnderSection: number;
+  // B1 SIGNAL — citation-shaped tables the parser SAW but could not attach
+  // to a question heading. Each such table is a candidate missed question
+  // (analyst-edited heading lost its formatting, or the question was
+  // restructured). High count → questions are being silently dropped.
+  orphanedCitationTables: number;
+  // B2 SIGNAL — distinct row-0-col-0 labels that LOOK citation-like (broad
+  // pattern: Citation*, Source*, Reference*, Authority*, Legal basis, etc.)
+  // but DIDN'T match the strict label regex the parser uses. Each entry is
+  // a real citation table the parser will silently skip. The labels are
+  // returned (deduplicated) so the analyst can see exactly what was missed.
+  unrecognisedCitationLabels: string[];
+}
+
 export interface GNDocument {
   type: GNType;
   jurisdiction: string;  // freetext from upload form (e.g. "Germany", "France")
@@ -52,6 +84,10 @@ export interface GNDocument {
   fileName: string;
   questions: GNQuestion[];
   rawBuffer: Buffer;
+  // Marketing-only: set by parser-marketing.ts so the validate route can
+  // build the low-confidence parse warning from real signals instead of
+  // guessing. Never set by the legacy parser; consumers gate on presence.
+  parseDiagnostics?: ParseDiagnostics;
 }
 
 // DB-sourced configuration for one rule, loaded from gn_rules table.
