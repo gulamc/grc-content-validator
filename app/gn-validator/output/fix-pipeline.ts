@@ -92,6 +92,26 @@ export async function runFixPipeline(
     });
   }
 
+  // Helper: cells in the same <w:tbl> as `anchorCellId`, at rowIndex >= 1.
+  // Used by the multi-row citation branch to clear non-anchor rows of a
+  // consolidated Citations table after collapsing all citations into row 0
+  // col 1. Row 0 col 0 (the "Citations" header) is preserved.
+  function multiRowSiblingsToClear(anchorCellId: string): string[] {
+    const target = cellMap.get(anchorCellId);
+    if (!target) return [];
+    const targetTbl = target.tcNode.parentNode?.parentNode;
+    if (!targetTbl) return [];
+    const out: string[] = [];
+    for (const [otherId, otherEntry] of cellMap) {
+      if (otherId === anchorCellId) continue;
+      if (otherEntry.rowIndex < 1) continue;
+      const otherTbl = otherEntry.tcNode.parentNode?.parentNode;
+      if (otherTbl !== targetTbl) continue;
+      out.push(otherId);
+    }
+    return out;
+  }
+
   // Only auto-fix results, sorted in canonical rule-ID order.
   const autoFixes = results
     .filter(r => r.fixType === 'auto')
@@ -104,6 +124,59 @@ export async function runFixPipeline(
 
     const cs = state.get(cellId);
     if (!cs) continue;
+
+    // ── Multi-row citation auto-fix (B1 Path A write-back) ───────────────────
+    //
+    // Direct Marketing multi-row Citations tables consolidate all col-1
+    // citation values into one `question.citation.text` (parser-marketing's
+    // `readCitationTable` joins them with `\n`). The rule's `correctedText`
+    // is the B1-fixed CONSOLIDATED text — already split per cleaned citation
+    // line by `\n`.
+    //
+    // The cell-map anchor for the citation is row 0 col 1 only — a fraction
+    // of the consolidated input. We cannot re-derive the consolidated text
+    // by joining cs.paragraphs (cell-map sees only the anchor cell). So we
+    // bypass the standard fix-function re-application and write the rule's
+    // pre-computed correctedText directly.
+    //
+    // Path A target (verified against BT_QC Philippines gold standard):
+    //   - row 0 col 1: <w:p> per fixed citation line (paragraph-split
+    //     mechanism in applyCellDiffs handles the insertions);
+    //   - all other cells at rowIndex >= 1 in the same table: text content
+    //     cleared via tracked deletion, <w:tr>/<w:tc> structure preserved.
+    if (result.field === 'citation' && result.correctedText !== undefined) {
+      const q = doc.questions.find(qq => qq.number === result.questionNumber);
+      if (q?.citation?.sourceKind === 'multi-row') {
+        const fixedLines = result.correctedText.split('\n');
+
+        // Apply fixed lines to row 0 col 1's existing paragraphs.
+        // splitLines lets applyCellDiffs append any extra lines as new <w:p>.
+        if (fixedLines.length >= cs.paragraphs.length) {
+          for (let i = 0; i < cs.paragraphs.length; i++) {
+            cs.paragraphs[i].currentText = fixedLines[i];
+          }
+          if (fixedLines.length > cs.paragraphs.length) {
+            cs.splitLines = fixedLines;
+          }
+        } else {
+          // Rare path: rule collapsed lines below original paragraph count.
+          for (let i = 0; i < fixedLines.length; i++) {
+            cs.paragraphs[i].currentText = fixedLines[i];
+          }
+          for (let i = fixedLines.length; i < cs.paragraphs.length; i++) {
+            cs.paragraphs[i].currentText = '';
+          }
+        }
+
+        // Clear all sibling cells in the same table at rowIndex >= 1.
+        for (const siblingId of multiRowSiblingsToClear(cellId)) {
+          const siblingCs = state.get(siblingId);
+          if (!siblingCs) continue;
+          for (const p of siblingCs.paragraphs) p.currentText = '';
+        }
+        continue;
+      }
+    }
 
     const fixFn = fixReg.get(result.ruleId);
     if (!fixFn) continue;

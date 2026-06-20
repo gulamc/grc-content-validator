@@ -31,15 +31,13 @@ const { parseGNDocument } = await import(`${root}/app/gn-validator/parser.ts`);
 const { generateDocx } = await import(`${root}/app/gn-validator/output/index.ts`);
 const { RULE_FNS } = await import(`${root}/app/gn-validator/rules/index.ts`);
 
+// Mirrors the validate route: no multi-row downgrade. B1 multi-row Path A
+// write-back lives entirely in `app/gn-validator/output/fix-pipeline.ts`,
+// so the harness exercises the same path an analyst's upload runs through.
 async function runAll(doc) {
   const results = [];
   for (const [, fn] of Object.entries(RULE_FNS)) {
     try { results.push(...(await fn(doc))); } catch {}
-  }
-  for (const r of results) {
-    if (r.fixType !== 'auto' || r.field !== 'citation') continue;
-    const q = doc.questions.find(qq => qq.number === r.questionNumber);
-    if (q?.citation?.sourceKind === 'multi-row') { r.fixType = 'flag'; delete r.correctedText; }
   }
   return results;
 }
@@ -92,9 +90,14 @@ for (const d of docs) {
   // Strict assertions
   const commentsOk = gnComments === flagCount;
   const anchorsOk = anchoredIds.length === gnComments;
-  const trackedOk = autoCount === 0
-    ? gnTracked === 0
-    : (gnTracked >= autoCount && gnTracked <= 2 * autoCount);
+  // Lower-bound assertion only: when auto-fixes are emitted, at least one
+  // GN-authored tracked change must appear in the docx. The earlier upper
+  // bound of `2 * autoCount` was wrong for B1 multi-row Path A — a single
+  // B1 auto-fix expands into one <w:ins> per cleaned citation line plus
+  // one tracked deletion per cleared sibling cell, easily 10-30 changes
+  // for one finding. Holding the upper bound would have prevented the
+  // multi-row write-back ever shipping correctly.
+  const trackedOk = autoCount === 0 ? gnTracked === 0 : gnTracked >= autoCount;
   const locatabilityOk = locatableFindings.length === results.length;
   const docOk = commentsOk && anchorsOk && trackedOk && locatabilityOk;
 
@@ -102,10 +105,10 @@ for (const d of docs) {
   if (!docOk) allOk = false;
 }
 
-console.log('| Document | flags | comments | ✓ | autos | ins+del | range[autos..2*autos] | ✓ | anchored/comments | ✓ | locatable/total | ✓ |');
+console.log('| Document | flags | comments | ✓ | autos | ins+del | ins+del >= autos | ✓ | anchored/comments | ✓ | locatable/total | ✓ |');
 console.log('|---|---|---|---|---|---|---|---|---|---|---|---|');
 for (const r of rows) {
-  const trackedRange = r.autoCount === 0 ? '0' : `[${r.autoCount}..${r.autoCount * 2}]`;
+  const trackedRange = r.autoCount === 0 ? '0' : `>= ${r.autoCount}`;
   console.log(`| ${r.d.name} | ${r.flagCount} | ${r.gnComments} | ${r.commentsOk ? '✅' : '❌'} | ${r.autoCount} | ${r.gnTracked} | ${trackedRange} | ${r.trackedOk ? '✅' : '❌'} | ${r.anchoredCount}/${r.gnComments} | ${r.anchorsOk ? '✅' : '❌'} | ${r.locatableFindings}/${r.totalFindings} | ${r.locatabilityOk ? '✅' : '❌'} |`);
 }
 
@@ -115,7 +118,7 @@ if (!allOk) {
     if (!r.docOk) {
       console.log(`\nFailures on ${r.d.name}:`);
       if (!r.commentsOk) console.log(`  - comments: expected ${r.flagCount}, got ${r.gnComments}`);
-      if (!r.trackedOk) console.log(`  - tracked changes: ${r.gnTracked} not in expected range [${r.autoCount}, ${r.autoCount * 2}]`);
+      if (!r.trackedOk) console.log(`  - tracked changes: ${r.gnTracked} below lower bound ${r.autoCount}`);
       if (!r.anchorsOk) console.log(`  - anchors: ${r.anchoredCount} of ${r.gnComments} comments anchored`);
       if (!r.locatabilityOk) console.log(`  - locatability: ${r.locatableFindings} of ${r.totalFindings} findings have a re-parseable questionNumber`);
     }

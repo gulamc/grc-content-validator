@@ -17,5 +17,6 @@ scripts/*
 !scripts/verify-deliverable.mjs
 !scripts/snapshot-full.mjs
 !scripts/verify-anchor-correctness.mjs
+!scripts/verify-rule-conformance.mjs
 !scripts/parse-rqf-template.mjs
 tsconfig.tsbuildinfo

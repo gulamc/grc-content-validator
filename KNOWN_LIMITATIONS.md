@@ -169,6 +169,55 @@ Each entry classifies the behaviour as:
 ## Already-known and tracked elsewhere
 
 - **A1 — Germany fabricated identifiers** → `Germany_identifier_backlog.md`. Decision (2026-06-18): stays as deferred-with-comms; this audit's reappearance does not reopen.
-- **B1 + B2 (parser predicates miss questions / unrecognised citation labels)** — wired into the low-confidence parse warning in this PR. Surface visibly; do not loosen predicates (false-positive risk).
-- **B1 (rules-b.ts "Rules and Regulations" false-positive class)** — separate scoping pass.
-- **Multi-row write-back deferred to flag-only** — see `app/gn-validator/output/comments.ts` and the multi-row downgrade in `app/api/gn-validator/validate/route.ts`. Explicit, not silent.
+- **B1 + B2 (parser predicates miss questions / unrecognised citation labels)** — wired into the low-confidence parse warning. Surface visibly; do not loosen predicates (false-positive risk).
+- **B1 (rules-b.ts "Rules and Regulations" false-positive class)** — **FIXED 2026-06-19** in `app/gn-validator/rules/rules-b.ts`. The bare `Regulations?\s` alternative in `CITATION_START_RE` was replaced with the specific shapes the rule actually wants to recognise: `Regulation\s+\((?:EU|EC|EEC)\)`, `Regulation\s+No\.\s`, `Implementing\s+Regulations?\s`. Regression-sized across all 5 sample docs: 3 false-positive split lines suppressed on Philippines; 0 regressions on Germany / Connecticut Overview / Belgium / Connecticut PIA; 1 EU two-law split preserved on Belgium.
+- **Multi-row write-back deferred to flag-only** — **FIXED 2026-06-19**. B1 Path A multi-row write-back implemented in `app/gn-validator/output/fix-pipeline.ts` (new `multiRowSiblingsToClear` helper + dedicated branch in `runFixPipeline`). The multi-row downgrade in `app/api/gn-validator/validate/route.ts` is removed. Verified on Philippines opened-docx Q3.1.10 against the BT_QC gold standard: row 0 col 1 holds 5 `<w:p>` with 9 GN-Validator `<w:ins>`; rows 1–4 are cleared with `<w:tr>`/`<w:tc>`/`<w:p>` structure preserved; zero `<w:br/>`.
+
+---
+
+## Spec vs code drift register
+
+The spec source of truth is `app/gn-validator/spec/dimension-spec.xlsx`. The
+per-rule conformance gate (`scripts/verify-rule-conformance.mjs`) reads
+fix-types directly from the xlsx at startup. This section documents
+deliberate drift between code and spec — what's in code but not the spec,
+and what's in the spec but stubbed in code.
+
+### Code-only additions (NOT in spec)
+
+These rules are emitted by code but have no row in `dimension-spec.xlsx`.
+They never count as conformance defects; they are reported as additions
+by the gate. To remove the spec drift, either add a row to the spec or
+remove the code.
+
+- **F2** — stub in `app/gn-validator/rules/rules-f.ts`. Intended as a
+  future AI-evaluated rule; currently returns `[]`. Spec has F1 only.
+- **G10b** — real implementation in `app/gn-validator/rules/rules-g.ts`,
+  flag-only, response-only. Catches "first word of bullet not
+  capitalised" — adjacent to G10 but distinct. Spec has G10 only.
+
+### Stubs scheduled for build (PR 2+)
+
+Spec'd rules with `return []` placeholders in code. These are net-new
+rule development, NOT silent under-delivery: the conformance gate flags
+them as defects whenever they would emit findings (i.e. as soon as the
+fixture exercises them; currently the rules are quiescent because the
+detection logic is the stub).
+
+- **E2** — spec: flag only. Code: stub. To build.
+- **F1** — spec: auto-fix. Code: stub. To build (incl. auto-fix write
+  path).
+- **I2** — spec: flag only. Code: stub. To build.
+- **I3** — spec: flag only. Code: stub. To build.
+
+### Deferred AI-suggestion class
+
+Spec'd rules whose spec fix-type is `AI Suggestion`. These remain
+stubbed pending the Phase 1E AI-evaluation infrastructure. Returning
+`[]` is conformant with "AI not yet wired", not a code/spec drift —
+once the AI plane is online the same stubs become the integration
+points.
+
+- **B4** — references in Response must appear in Citation.
+- **H4** — full legal citation on first mention.
+- **I1** — shorthand → professional prose.
