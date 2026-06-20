@@ -40,11 +40,7 @@ const results = [];
 for (const [, fn] of Object.entries(RULE_FNS)) {
   try { results.push(...(await fn(doc))); } catch {}
 }
-for (const r of results) {
-  if (r.fixType !== 'auto' || r.field !== 'citation') continue;
-  const q = doc.questions.find(qq => qq.number === r.questionNumber);
-  if (q?.citation?.sourceKind === 'multi-row') { r.fixType = 'flag'; delete r.correctedText; }
-}
+// No multi-row downgrade — mirrors the validate route after B1 Path A.
 const outBuf = await generateDocx(doc, results);
 
 // ── Open output zip and parse XML directly (no GN parser involvement) ────────

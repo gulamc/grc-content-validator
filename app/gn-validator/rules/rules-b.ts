@@ -12,6 +12,19 @@ const BULLET_RE = /^[\s•\-\*·‣▪]+/;
 
 // Prefixes that unambiguously start a new citation entry after a ". " boundary.
 // False negative (missing a split) is safer than false positive (splitting a single citation).
+//
+// The "Regulation" patterns are intentionally specific. A bare `Regulations?\s`
+// match (which used to live here) flags any phrase beginning with "Regulation"
+// or "Regulations", including non-citation prose like "Rules and Regulations"
+// — turning "...Implementing Rules and Regulations" into two false "and"-split
+// citations. EU citations of regulations are always one of these specific
+// shapes:
+//   - "Regulation (EU) 2016/679" (and variants like "(EC)", "(EEC)")
+//   - "Regulation No. 2018/1725"
+//   - "Implementing Regulations of …"
+// Plain "Regulations of …" without a number or qualifier is almost never
+// a fresh citation start — it's either prose or the second half of an
+// "Implementing Rules and Regulations" phrase.
 const CITATION_START_RE = new RegExp(
   '^(?:' + [
     '§{1,2}',
@@ -30,7 +43,9 @@ const CITATION_START_RE = new RegExp(
     'Federal\\s',
     'Law\\s',
     'Directive\\s',
-    'Regulations?\\s',
+    'Regulation\\s+\\((?:EU|EC|EEC)\\)',
+    'Regulation\\s+No\\.\\s',
+    'Implementing\\s+Regulations?\\s',
     'Decision\\s',
     'Order\\s',
     'Decree\\s',

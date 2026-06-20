@@ -3,25 +3,27 @@ import { NOT_APPLICABLE_PERSONA_SECTIONS } from '../config/not-applicable-person
 
 // ── C1 helpers ────────────────────────────────────────────────────────────────
 
-const PERSONA_AUTO_CORRECTIONS: Array<{ pattern: RegExp; replacement: string }> = [
-  { pattern: /^data controllers?$/i, replacement: 'controller' },
-  { pattern: /^data processors?$/i,  replacement: 'processor'  },
-];
-
+// Spec (`GN_Validator_Dimension_Spec_FINAL`, row C1): "Flag (clear errors)".
+// The rule produces flag-only findings. Earlier code also auto-corrected
+// "data controller(s)" → "controller" and "data processor(s)" → "processor",
+// which is not in the spec; to re-introduce auto-correction, the spec must
+// be amended first and the rule re-derived from there.
 const PERSONA_FLAGS: RegExp[] = [
+  /^data controllers?$/i,
+  /^data processors?$/i,
   /data subject/i,
   /attorney general/i,
 ];
 
+// applyC1Fix is referenced by `app/gn-validator/output/fix-pipeline.ts`'s
+// fix registry. With C1 as flag-only it is never invoked (no auto-fix result
+// carries ruleId 'C1'), but the export is kept so the registry shape stays
+// stable for future spec changes.
 export function applyC1Fix(cellText: string): string {
-  const trimmed = cellText.trim();
-  for (const { pattern, replacement } of PERSONA_AUTO_CORRECTIONS) {
-    if (pattern.test(trimmed)) return replacement;
-  }
-  return cellText; // no auto-correction applies
+  return cellText;
 }
 
-// C1 — Valid Persona Values (deterministic parts only; AI branch deferred to 1E)
+// C1 — Valid Persona Values (flag-only per spec).
 export async function ruleC1(doc: GNDocument): Promise<GNValidationResult[]> {
   const results: GNValidationResult[] = [];
 
@@ -30,22 +32,6 @@ export async function ruleC1(doc: GNDocument): Promise<GNValidationResult[]> {
     const text = question.persona.text.trim();
     if (!text) continue; // A4 handles blank
 
-    // Auto-correct branch
-    const fixed = applyC1Fix(text);
-    if (fixed !== text) {
-      results.push({
-        ruleId: 'C1',
-        questionNumber: question.number,
-        field: 'persona',
-        severity: 'error',
-        message: `Invalid persona value "${text}". Use "${fixed}".`,
-        fixType: 'auto',
-        correctedText: fixed,
-      });
-      continue;
-    }
-
-    // Always-flag branch
     for (const pattern of PERSONA_FLAGS) {
       if (pattern.test(text)) {
         results.push({
@@ -59,8 +45,6 @@ export async function ruleC1(doc: GNDocument): Promise<GNValidationResult[]> {
         break;
       }
     }
-
-    // AI branch (Phase 1E) — not implemented yet
   }
 
   return results;
