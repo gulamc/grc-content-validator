@@ -61,22 +61,6 @@ function hasBullets(text: string): boolean {
   return text.split('\n').some(line => BULLET_RE.test(line));
 }
 
-// "and" between two citation entries: requires the text after "and" to start
-// with a recognised citation prefix (CITATION_START_RE). This prevents false
-// positives on law titles that contain "and" internally, e.g.
-// "Electronic Communications Networks and Services Directive" or
-// "Guide on Reporting and Managing a Data Breach".
-function hasAndJoinedLaws(text: string): boolean {
-  return text.split('\n').some(line => {
-    const andRe = /[a-zA-Z)]\s+and\s+/g;
-    let m: RegExpExecArray | null;
-    while ((m = andRe.exec(line)) !== null) {
-      if (startsWithCitationPrefix(line.slice(m.index + m[0].length))) return true;
-    }
-    return false;
-  });
-}
-
 // Words that legitimately precede ". §" or ". Section" as part of an abbreviation
 // (e.g. "Conn. Gen. Stat. § 36a-701b"), not as a citation-entry separator.
 const LEGAL_ABBR_BEFORE_PERIOD = new Set([
@@ -88,26 +72,99 @@ function wordBeforeDot(line: string, dotIndex: number): string {
   return (line.slice(0, dotIndex).match(/(\w+)$/)?.[1] ?? '').toLowerCase();
 }
 
-// ". " boundary where what follows starts with a recognised citation prefix,
-// and the word immediately before the "." is not a known legal abbreviation.
+// ── Path B: different-instrument predicate ────────────────────────────────────
+//
+// The spec's positive example for B1 — "Articles 2-5 of the GDPR and Articles
+// 5, 7, and 9 of the National Law" — splits because the two sides reference
+// DIFFERENT instruments (GDPR vs National Law). Every B1 false positive we've
+// hit ("Sections 12 and 13 of the Data Privacy Act"; "Rules and Regulations
+// of …"; "G.R. No. 203335" inside the Disini case citation) is intra-
+// citation: the two sides of the apparent join reference the SAME instrument,
+// or one side has no instrument reference at all and inherits from the other.
+//
+// `extractInstrumentTail` pulls the trailing " of [the] X" instrument noun
+// phrase from a segment. `shouldSplit` decides whether a candidate split
+// boundary is a genuine different-instrument join, falling false-negative-
+// safe under any ambiguity. The trigger predicates and the splitters both
+// delegate to `shouldSplit` so the detection layer and the rewrite layer
+// cannot disagree.
+
+/**
+ * Pull the trailing "of [the] <Capitalized noun phrase>" instrument tail
+ * from a citation segment. Returns the noun phrase lowercased and
+ * whitespace-normalised, or null if none is reliably extractable.
+ *
+ * Conservative by construction. The noun-phrase character class excludes
+ * comma, period, and digits — so any segment whose trailing tail looks
+ * messy (article numbers, mid-name punctuation, lowercase continuation)
+ * fails to match and returns null. `shouldSplit` then refuses to split.
+ *
+ * Tail length is bounded to 6 words to prevent runaway matches against
+ * prose-y citations.
+ */
+function extractInstrumentTail(segment: string): string | null {
+  const cleaned = segment
+    .replace(/\s+/g, ' ')
+    .trim()
+    // Drop trailing " as amended …" qualifiers so they don't shadow the
+    // instrument name they qualify.
+    .replace(/\s*[,;]\s*as\s+amended.*$/i, '')
+    .replace(/[.,;:]+$/, '');
+
+  const m = cleaned.match(
+    /\sof\s+(?:the\s+)?([A-Z][A-Za-z][A-Za-z'’\s\-&]{0,80})$/,
+  );
+  if (!m) return null;
+  const tail = m[1].trim();
+  if (tail.split(/\s+/).length > 6) return null;
+  return tail.toLowerCase().replace(/\s+/g, ' ');
+}
+
+/**
+ * Decide whether a candidate split between `left` and `right` is a genuine
+ * different-instrument boundary. False-negative-safe:
+ *   - both tails exist AND differ → split (only positive case)
+ *   - either tail is null         → don't split (inheritance assumed)
+ *   - tails equal                 → don't split (same instrument)
+ *
+ * A missed real split is harmless (citation stays as-is). A wrong split
+ * corrupts an analyst's citation. We bias toward not splitting.
+ */
+function shouldSplit(left: string, right: string): boolean {
+  const lTail = extractInstrumentTail(left);
+  const rTail = extractInstrumentTail(right);
+  if (!lTail || !rTail) return false;
+  return lTail !== rTail;
+}
+
+/**
+ * Trigger: any " and " boundary in `text` where the right side starts with a
+ * citation prefix AND the two sides reference different instruments. Mirrors
+ * `splitOnAndNotInParens` so detection and rewrite cannot diverge.
+ */
+function hasAndJoinedLaws(text: string): boolean {
+  return text.split('\n').some(line => splitOnAndNotInParens(line).length > 1);
+}
+
+/**
+ * Trigger: any ". " boundary in `text` where the right side starts with a
+ * citation prefix AND the two sides reference different instruments. Mirrors
+ * `splitPeriodJoinedLine` so detection and rewrite cannot diverge.
+ */
 function hasPeriodJoinedLaws(text: string): boolean {
-  return text.split('\n').some(line => {
-    const periodPattern = /\.\s+/g;
-    let match;
-    while ((match = periodPattern.exec(line)) !== null) {
-      if (LEGAL_ABBR_BEFORE_PERIOD.has(wordBeforeDot(line, match.index))) continue;
-      if (startsWithCitationPrefix(line.slice(match.index + match[0].length))) return true;
-    }
-    return false;
-  });
+  return text.split('\n').some(line => splitPeriodJoinedLine(line).length > 1);
 }
 
 function hasSectionSpelledOut(text: string): boolean {
   return /\bSections?\s+\d/.test(text);
 }
 
-// Split a single line on ". " boundaries where what follows is a recognised citation start,
-// unless the word before "." is a known legal abbreviation (e.g. "Stat", "Gen", "Code").
+/**
+ * Split a single line on ". " boundaries where:
+ *   1. the word before "." is not a known legal abbreviation,
+ *   2. the text after "." starts with a recognised citation prefix, and
+ *   3. the left and right sides reference DIFFERENT instruments.
+ */
 function splitPeriodJoinedLine(line: string): string[] {
   const parts: string[] = [];
   let start = 0;
@@ -116,11 +173,12 @@ function splitPeriodJoinedLine(line: string): string[] {
   while ((match = periodPattern.exec(line)) !== null) {
     if (LEGAL_ABBR_BEFORE_PERIOD.has(wordBeforeDot(line, match.index))) continue;
     const after = line.slice(match.index + match[0].length);
-    if (startsWithCitationPrefix(after)) {
-      parts.push(line.slice(start, match.index + 1)); // keep the period on the left segment
-      start = match.index + match[0].length;
-      periodPattern.lastIndex = start;
-    }
+    if (!startsWithCitationPrefix(after)) continue;
+    const leftSegment = line.slice(start, match.index + 1); // keep the period
+    if (!shouldSplit(leftSegment, after)) continue;
+    parts.push(leftSegment);
+    start = match.index + match[0].length;
+    periodPattern.lastIndex = start;
   }
   parts.push(line.slice(start));
   return parts.filter(p => p.trim());
@@ -128,11 +186,9 @@ function splitPeriodJoinedLine(line: string): string[] {
 
 /**
  * Split a segment on " and " boundaries where:
- *   1. "and" is NOT inside an unclosed parenthetical (parenthetical guard), and
- *   2. the text after "and" starts with a recognised citation prefix (prefix guard).
- * The prefix guard prevents splitting inside law titles that contain "and" internally,
- * e.g. "Electronic Communications Networks and Services Directive" or
- * "Guide on Reporting and Managing a Data Breach".
+ *   1. "and" is NOT inside an unclosed parenthetical (parenthetical guard),
+ *   2. the text after "and" starts with a recognised citation prefix, and
+ *   3. the left and right sides reference DIFFERENT instruments.
  */
 function splitOnAndNotInParens(segment: string): string[] {
   const andRe = /\s+and\s+/g;
@@ -143,9 +199,12 @@ function splitOnAndNotInParens(segment: string): string[] {
     const preceding = segment.slice(0, match.index);
     const lastOpen = preceding.lastIndexOf('(');
     const lastClose = preceding.lastIndexOf(')');
-    if (lastOpen > lastClose) continue; // inside parenthetical — skip
-    if (!startsWithCitationPrefix(segment.slice(match.index + match[0].length))) continue; // not a citation start — skip
-    parts.push(segment.slice(start, match.index));
+    if (lastOpen > lastClose) continue;
+    const rightStart = segment.slice(match.index + match[0].length);
+    if (!startsWithCitationPrefix(rightStart)) continue;
+    const leftSegment = segment.slice(start, match.index);
+    if (!shouldSplit(leftSegment, rightStart)) continue;
+    parts.push(leftSegment);
     start = match.index + match[0].length;
   }
   parts.push(segment.slice(start));

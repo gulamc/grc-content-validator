@@ -18,5 +18,6 @@ scripts/*
 !scripts/snapshot-full.mjs
 !scripts/verify-anchor-correctness.mjs
 !scripts/verify-rule-conformance.mjs
+!scripts/verify-b1-predicate.mjs
 !scripts/parse-rqf-template.mjs
 tsconfig.tsbuildinfo

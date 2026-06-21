@@ -34,12 +34,38 @@ import JSZip from 'jszip';
 import { DOMParser } from '@xmldom/xmldom';
 import xlsx from 'xlsx';
 
+const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+
+function _getChildren(node, localName) {
+  const out = [];
+  for (let i = 0; i < node.childNodes.length; i++) {
+    const c = node.childNodes[i];
+    if (c.localName === localName && c.namespaceURI === W_NS) out.push(c);
+  }
+  return out;
+}
+function _pCommittedText(p) {
+  let text = '';
+  function walk(n) {
+    for (let i = 0; i < n.childNodes.length; i++) {
+      const c = n.childNodes[i];
+      if (!c.localName) continue;
+      if (c.localName === 'del') continue;
+      if (c.localName === 't') text += c.textContent ?? '';
+      else if (c.childNodes?.length) walk(c);
+    }
+  }
+  walk(p);
+  return text;
+}
+
 const root = '/Users/user/grc-content-validator/grc-content-validator';
 const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 
 const { parseGNDocument } = await import(`${root}/app/gn-validator/parser.ts`);
 const { generateDocx } = await import(`${root}/app/gn-validator/output/index.ts`);
 const { RULE_FNS } = await import(`${root}/app/gn-validator/rules/index.ts`);
+const { buildCellMap, buildCellIdIndex } = await import(`${root}/app/gn-validator/output/cell-map.ts`);
 
 // ── SPEC source of truth ─────────────────────────────────────────────────────
 //
@@ -101,6 +127,7 @@ console.log(` Spec source: app/gn-validator/spec/dimension-spec.xlsx (${SPEC_FIX
 console.log('═══════════════════════════════════════════════════════════════\n');
 
 const defects = [];
+const citationDefects = [];        // content-preservation / drift defects
 const additions = new Set();          // rule IDs emitted by code that are NOT in spec
 const allRuleIdsSeen = new Set();
 for (const d of docs) {
@@ -184,6 +211,159 @@ for (const d of docs) {
 
     console.log(`| ${ruleId} | ${specFt ?? '(not in spec)'} | ${codeFt} | ${list.length} | ${docxComments} | ${docxHasTracked} | ${conformance} |`);
   }
+
+  // ── Citation content-preservation + line-count-drift gate ────────────────
+  //
+  // For every citation auto-fix on this doc, assert two things on the
+  // OPENED output docx (raw OOXML, no parser round-trip):
+  //   1. Every original citation line (from parser-marketing's
+  //      `question.citation.text` split by `\n`) is reconstructible from
+  //      the after-Accept-All content of the same citation cell or table.
+  //      "Reconstructible" = the citation's head (first 40 chars) or tail
+  //      (last 25 chars), with whitespace normalised, appears as a
+  //      substring in the after-accept content. Tolerates B1's
+  //      whitespace/bullet reformatting; does NOT tolerate text loss.
+  //   2. The original citation count equals the after-Accept-All data
+  //      line count. Drift in either direction is a defect: positive
+  //      drift = false-positive split (e.g. the would-be Disini "G.R.
+  //      No." split into two pseudo-citations); negative drift = a
+  //      false-merge.
+  //
+  // Both assertions apply to every citation auto-fix, not just B1 — any
+  // future citation-touching auto-fix is held to the same standard.
+  //
+  // Cell resolution uses production's own buildCellMap + buildCellIdIndex
+  // — the same code an analyst's upload runs through — so the assertion
+  // anchors on exactly the cell the fix pipeline targeted, with no
+  // approximation. For multi-row Path A write-back, the data lines are
+  // every paragraph in the same table EXCLUDING the row-0 col-0
+  // "Citations" header.
+  const { cellMap } = await buildCellMap(zip, docXml);
+  const cellIdIndex = buildCellIdIndex(doc, cellMap);
+
+  for (const r of screenResults) {
+    if (r.fixType !== 'auto') continue;
+    if (r.field !== 'citation') continue;
+    const q = doc.questions.find(qq => qq.number === r.questionNumber);
+    if (!q?.citation) continue;
+    const origLines = q.citation.text.split('\n').map(s => s.trim()).filter(Boolean);
+    if (origLines.length === 0) continue;
+
+    const cellId = cellIdIndex.get(`${q.number}:citation`);
+    if (!cellId) {
+      citationDefects.push({
+        doc: d.name, qNum: q.number, ruleId: r.ruleId,
+        issue: 'could not resolve citation cell in cellIdIndex',
+      });
+      continue;
+    }
+    const anchorEntry = cellMap.get(cellId);
+    if (!anchorEntry) {
+      citationDefects.push({
+        doc: d.name, qNum: q.number, ruleId: r.ruleId,
+        issue: 'could not find citation cell in cellMap',
+      });
+      continue;
+    }
+
+    let afterAcceptParas = [];
+    let headerText = '';
+    if (q.citation.sourceKind === 'multi-row') {
+      // Path A write-back collapses every citation into the anchor cell and
+      // clears the sibling rows. After-accept data lines = every <w:p> in
+      // the whole table that is not the "Citations" header.
+      const tbl = anchorEntry.tcNode.parentNode?.parentNode;
+      if (tbl) {
+        for (const row of _getChildren(tbl, 'tr')) {
+          for (const tc of _getChildren(row, 'tc')) {
+            for (const p of _getChildren(tc, 'p')) {
+              const t = _pCommittedText(p).trim();
+              if (t) afterAcceptParas.push(t);
+            }
+          }
+        }
+        const r0 = _getChildren(tbl, 'tr')[0];
+        const r0c0 = r0 ? _getChildren(r0, 'tc')[0] : null;
+        headerText = r0c0 ? _getChildren(r0c0, 'p').map(_pCommittedText).join('').trim() : '';
+      }
+    } else {
+      // Single-row / legacy: the citation cell IS the anchor cell. Count
+      // its own paragraphs only — sibling cells (Response, Persona) belong
+      // to other findings and are not part of B1's scope.
+      for (const p of _getChildren(anchorEntry.tcNode, 'p')) {
+        const t = _pCommittedText(p).trim();
+        if (t) afterAcceptParas.push(t);
+      }
+    }
+
+    const dataLines = afterAcceptParas.filter(p => p !== headerText);
+
+    // Normalise to alphanumeric tokens (length >= 3) for content comparison.
+    // Tolerates D3 trailing-period strip, H1 "(the X)" → "(X)", G7 curly
+    // → straight quotes, and other intra-citation editorial fixes that
+    // touch single characters. Catches whole-citation deletion — if the
+    // citation's substantive words vanish, the missing-token count > 0.
+    function tokenize(s) {
+      return new Set(
+        s.toLowerCase()
+          .replace(/[^a-z0-9§]+/g, ' ')
+          .split(/\s+/)
+          .filter(w => w.length >= 3),
+      );
+    }
+    const haystackTokens = tokenize(dataLines.join(' '));
+
+    // (1) Content preservation: every original citation must be present.
+    // We require all substantive tokens (length >= 3) of the original
+    // citation to appear somewhere in the after-accept content. If any
+    // token is missing, the citation has either been wholly deleted or
+    // edited beyond recognition.
+    const missing = [];
+    for (const orig of origLines) {
+      const origTokens = tokenize(orig);
+      const absent = [...origTokens].filter(t => !haystackTokens.has(t));
+      if (origTokens.size > 0 && absent.length === origTokens.size) {
+        missing.push(orig);
+      } else if (absent.length > Math.max(1, origTokens.size * 0.5)) {
+        // > 50% of substantive tokens missing AND more than one token —
+        // signals likely text loss rather than a small editorial fix.
+        missing.push(orig);
+      }
+    }
+    if (missing.length > 0) {
+      citationDefects.push({
+        doc: d.name, qNum: q.number, ruleId: r.ruleId,
+        issue: `${missing.length} original citation(s) NOT reconstructible from after-accept content`,
+        details: missing.map(m => `      • ${m.slice(0, 120)}${m.length > 120 ? '…' : ''}`),
+      });
+    }
+
+    // (2) Line-count drift: original count must equal after-accept count.
+    if (origLines.length !== dataLines.length) {
+      citationDefects.push({
+        doc: d.name, qNum: q.number, ruleId: r.ruleId,
+        issue: `line-count drift: original ${origLines.length} citations → ${dataLines.length} after-accept lines (delta ${dataLines.length - origLines.length})`,
+        details: [
+          `      Original (${origLines.length}):`,
+          ...origLines.map(l => `        • ${l.slice(0, 110)}${l.length > 110 ? '…' : ''}`),
+          `      After-accept data lines (${dataLines.length}):`,
+          ...dataLines.map(l => `        • ${l.slice(0, 110)}${l.length > 110 ? '…' : ''}`),
+        ],
+      });
+    }
+  }
+}
+
+console.log('\n═══════════════════════════════════════════════════════════════');
+console.log(' Citation content-preservation + line-count-drift');
+console.log('═══════════════════════════════════════════════════════════════\n');
+if (citationDefects.length === 0) {
+  console.log('✅ No citation content lost; no line-count drift on any citation auto-fix.');
+} else {
+  for (const c of citationDefects) {
+    console.log(`❌ ${c.doc} — Q${c.qNum} ${c.ruleId}: ${c.issue}`);
+    if (c.details) for (const line of c.details) console.log(line);
+  }
 }
 
 console.log('\n═══════════════════════════════════════════════════════════════');
@@ -200,13 +380,17 @@ if (additions.size === 0) {
 console.log('\n═══════════════════════════════════════════════════════════════');
 console.log(' Defect summary');
 console.log('═══════════════════════════════════════════════════════════════\n');
-if (defects.length === 0) {
+const totalDefects = defects.length + citationDefects.length;
+if (totalDefects === 0) {
   console.log('✅ No defects found.');
 } else {
   for (const d of defects) {
     console.log(`❌ ${d.doc} — ${d.ruleId}:`);
     for (const i of d.issues) console.log(`     • ${i}`);
   }
-  console.log(`\n${defects.length} defect row(s). NOT done.`);
+  for (const c of citationDefects) {
+    console.log(`❌ ${c.doc} — Q${c.qNum} ${c.ruleId}: ${c.issue}`);
+  }
+  console.log(`\n${totalDefects} defect row(s) (${defects.length} spec, ${citationDefects.length} citation). NOT done.`);
   process.exit(1);
 }
