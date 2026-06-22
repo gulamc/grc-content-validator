@@ -35,8 +35,10 @@ export async function ruleE1(doc: GNDocument): Promise<GNValidationResult[]> {
       });
     }
 
+    // Key on internalNumber — `question.number` is the analyst-facing
+    // identifier which post-Req1 is a text-fallback string for many docs.
     const isPersonaExempt =
-      personaExempt.includes(question.number) ||
+      personaExempt.includes(question.internalNumber) ||
       personaExempt.includes(question.section);
 
     if (!isPersonaExempt && question.persona) {

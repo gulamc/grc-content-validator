@@ -142,11 +142,17 @@ const H5_ABBR_RE = /\b([A-Z]{3,}(?:-[A-Z]+)?)\b/g;
 export async function ruleH5(doc: GNDocument): Promise<GNValidationResult[]> {
   type CellRef = { index: number; q: (typeof doc.questions)[0]; field: 'response' | 'citation' };
 
-  const sorted = [...doc.questions].sort((a, b) =>
-    a.number.localeCompare(b.number, undefined, { numeric: true }));
+  // Iterate in DOCUMENT order — the order parser-marketing / parser.ts
+  // populated doc.questions in. Sorting by q.number was a previous attempt
+  // at deterministic iteration that worked accidentally when q.number was
+  // always "X.Y.Z" (numeric-locale sort happens to match document order).
+  // Requirement 1 made q.number a text-fallback string for docs without
+  // LITERAL prefixes; an alphabetic sort on text-fallback strings does
+  // NOT match document order, which broke H5's "first-introduction"
+  // determination. Doc-order iteration is the correct invariant.
 
   const cellRefs: CellRef[] = [];
-  for (const q of sorted) {
+  for (const q of doc.questions) {
     for (const field of ['response', 'citation'] as const) {
       if (q[field]?.text.trim()) cellRefs.push({ index: cellRefs.length, q, field });
     }

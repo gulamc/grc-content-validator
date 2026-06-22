@@ -55,8 +55,14 @@ async function runAllRules(doc) {
 const INPUT_PATH  = `${root}/samples/fixtures/fixture-b1-realtest-input.docx`;
 const OUTPUT_PATH = `${root}/samples/fixtures/fixture-b1-realtest-output.docx`;
 
-const POSITIVE_Q = '1.1.1';
-const NEGATIVE_Q = '1.1.2';
+// Identify the positive / negative cells by their fixture-specific content,
+// NOT by a hardcoded question number. Requirement 1 (text-fallback
+// identifiers) made the displayed `number` for these questions become the
+// question text — looking up by "1.1.1" / "1.1.2" stopped working at the
+// script level even though B1's behaviour and cell anchoring are unchanged.
+// Lookup by cell text is invariant to the identifier scheme.
+const POSITIVE_CELL_TEXT = 'Articles 2-5 of the GDPR and Articles 5, 7, and 9 of the National Law';
+const NEGATIVE_CELL_TEXT = 'Sections 12 and 13 of the Data Privacy Act';
 
 // ── Pipeline ────────────────────────────────────────────────────────────────
 const buf = readFileSync(INPUT_PATH);
@@ -64,6 +70,18 @@ const doc = await parseGNDocument(buf, 'marketing', 'Germany', 'fixture-b1-realt
 const results = await runAllRules(doc);
 const outBuf = await generateDocx(doc, results);
 writeFileSync(OUTPUT_PATH, Buffer.from(outBuf));
+
+// Resolve POSITIVE_Q / NEGATIVE_Q dynamically from the fixture's cell text.
+const positiveQuestion = doc.questions.find(q => q.citation?.text.trim() === POSITIVE_CELL_TEXT);
+const negativeQuestion = doc.questions.find(q => q.citation?.text.trim() === NEGATIVE_CELL_TEXT);
+if (!positiveQuestion) throw new Error('Could not locate positive question by cell text');
+if (!negativeQuestion) throw new Error('Could not locate negative question by cell text');
+const POSITIVE_Q = positiveQuestion.number;
+const NEGATIVE_Q = negativeQuestion.number;
+console.log(`Positive question identifier (resolved from fixture): ${JSON.stringify(POSITIVE_Q.slice(0, 100))}${POSITIVE_Q.length > 100 ? '…' : ''}`);
+console.log(`Negative question identifier (resolved from fixture): ${JSON.stringify(NEGATIVE_Q.slice(0, 100))}${NEGATIVE_Q.length > 100 ? '…' : ''}`);
+console.log(`Positive numberProvenance: ${positiveQuestion.numberProvenance}`);
+console.log(`Negative numberProvenance: ${negativeQuestion.numberProvenance}`);
 
 // ── Build the "display payload" the validate route would emit ──────────────
 // Mirrors app/api/gn-validator/validate/route.ts shape exactly.

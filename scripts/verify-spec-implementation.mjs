@@ -202,12 +202,24 @@ if (unbuilt.length === 0) {
 }
 
 console.log('\n═══════════════════════════════════════════════════════════════');
-const greenLabel = unbuilt.length === 0
-  ? '✅ GREEN — every spec\'d rule is implemented'
-  : `❌ RED — ${unbuilt.length} rule(s) unbuilt`;
+let greenLabel;
+if (unbuilt.length > 0) {
+  greenLabel = `❌ RED — ${unbuilt.length} rule(s) unbuilt`;
+} else if (deferredAi.length > 0) {
+  // Work queue is empty but the deferred-AI bucket is non-zero. The
+  // ai-suggestion rules are blocked on the AI-evaluation plane
+  // (infrastructure), not on rule logic, so this state is acceptable
+  // for now — but the deferred bucket is NOT silently green. The label
+  // and the deferred list keep these visible every run. "All rules
+  // implemented" ultimately means this bucket is empty too, after the
+  // AI plane lands.
+  greenLabel = `🟡 WORK QUEUE EMPTY — ${deferredAi.length} deferred-AI rule(s) still pending the AI evaluation plane (see list above). NOT fully green.`;
+} else {
+  greenLabel = '✅ FULLY GREEN — every spec\'d rule is implemented (no deferred-AI remaining)';
+}
 console.log(` ${greenLabel}`);
 console.log(`   implemented: ${implemented.length}`);
-console.log(`   deferred-AI: ${deferredAi.length}`);
+console.log(`   deferred-AI: ${deferredAi.length}  ${deferredAi.length > 0 ? '← visible, not forgiven' : ''}`);
 console.log(`   unbuilt:     ${unbuilt.length}`);
 console.log('═══════════════════════════════════════════════════════════════');
 

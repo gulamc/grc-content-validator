@@ -386,16 +386,37 @@ function parseTableDrivenLegacy(
       }
 
       sectionCounts[currentSection] = (sectionCounts[currentSection] ?? 0) + 1;
-      const questionNumber = `${currentSection}.${sectionCounts[currentSection]}`;
+      const computedNumber = `${currentSection}.${sectionCounts[currentSection]}`;
+
+      // Findability gate (Requirement 1): the displayed identifier must be
+      // Ctrl-F'able in the source. The computed counter `X.Y.Z` only
+      // matches the analyst's view when the question paragraph also has
+      // that literal prefix in its text (Connecticut convention). For
+      // docs that rely on Word auto-numbering without a literal prefix
+      // (Germany convention), the computed number is unfindable as text,
+      // so we fall back to the question text.
+      const literalPrefixMatch = pendingQuestionText.match(/^(\d+(?:\.\d+){1,4})\.?\s+/);
+      let number: string;
+      let numberProvenance: 'literal' | 'text-fallback';
+      if (literalPrefixMatch && literalPrefixMatch[1] === computedNumber) {
+        number = computedNumber;
+        numberProvenance = 'literal';
+      } else {
+        number = `${currentSection} / ${pendingQuestionText}`;
+        numberProvenance = 'text-fallback';
+      }
 
       const cit = readCitationTable(node, serializer);
       const citation: GNCell | undefined = cit ? { ...cit.cell, sourceKind: cit.sourceKind } : undefined;
 
       questions.push({
-        number: questionNumber,
+        number,
         section: currentSection,
         questionText: pendingQuestionText,
         citation,
+        numberProvenance,
+        // Stable computed identifier for internal rule keying. See types.ts.
+        internalNumber: computedNumber,
       });
 
       pendingQuestionText = '';
@@ -577,24 +598,48 @@ function parseHeadingDriven(
     //      documents that hard-code the number in text instead of via numPr.
     //   3. "Section heading / Question text" — last-resort fallback for
     //      paragraphs without numbering and without a literal prefix.
+    //
+    // Requirement 1 (2026-06-22): displayed identifiers must be FINDABLE in
+    // the source document. The resolver computes numbers from <w:numPr> +
+    // numbering.xml — faithful to the OOXML spec but NOT proven to match
+    // Word's rendered output without opening the docx in Word/LibreOffice.
+    // Analysts who Ctrl-F a resolver-computed number against the source XML
+    // get zero hits (e.g. Belgium Breach is 100% resolver-only — every
+    // identifier was unfindable as text). To honour the non-negotiable
+    // findability contract, the displayed `number` is now LITERAL or
+    // TEXT-FALLBACK only. The resolver's output is still used internally
+    // for the `section` field (rule guards like B3's list-of-laws check
+    // depend on it) but never shown to the analyst as a locator.
     let number: string;
     let section: string;
-    if (ev.resolvedNumber) {
-      number = ev.resolvedNumber;
+    let numberProvenance: 'literal' | 'text-fallback';
+    // `internalNumber` is the stable computed identifier (literal if
+    // present, else resolver output, else the text-fallback string). Used
+    // by rules with hardcoded exclusion lists keyed on the old "X.Y.Z"
+    // form (B3, C2, E1, G3). See types.ts.
+    let internalNumber: string;
+    const literalMatch = questionText.match(LITERAL_QUESTION_LABEL_RE);
+    if (literalMatch) {
+      number = literalMatch[1];
       const xy = number.match(/^(\d+\.\d+)/);
       section = xy ? xy[1] : '';
+      numberProvenance = 'literal';
+      internalNumber = literalMatch[1];
     } else {
-      const literalMatch = questionText.match(LITERAL_QUESTION_LABEL_RE);
-      if (literalMatch) {
-        number = literalMatch[1];
-        const xy = number.match(/^(\d+\.\d+)/);
+      number = currentSectionHeading
+        ? `${currentSectionHeading} / ${questionText}`
+        : questionText;
+      // Resolver-computed section is still used as a rule guard input
+      // (e.g. B3 LIST_OF_LAWS_QUESTIONS keys on it). It is internal-only.
+      if (ev.resolvedNumber) {
+        const xy = ev.resolvedNumber.match(/^(\d+\.\d+)/);
         section = xy ? xy[1] : '';
+        internalNumber = ev.resolvedNumber;
       } else {
-        number = currentSectionHeading
-          ? `${currentSectionHeading} / ${questionText}`
-          : questionText;
-        section = ''; // Not numeric — no rule consumes this for marketing.
+        section = ''; // No rule consumes this when both literal and resolver are unavailable.
+        internalNumber = number;  // last-resort: same as the text-fallback display
       }
+      numberProvenance = 'text-fallback';
     }
 
     questions.push({
@@ -602,6 +647,8 @@ function parseHeadingDriven(
       section,
       questionText,
       citation,
+      numberProvenance,
+      internalNumber,
       // headingBodyIndex anchors the question to its heading <w:p> position.
       // The output pipeline uses this when a finding's field has no cell
       // (e.g. A1 firing on a question with no citation table — the comment

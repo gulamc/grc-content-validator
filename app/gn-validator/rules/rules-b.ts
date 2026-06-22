@@ -343,7 +343,9 @@ export async function ruleB3(doc: GNDocument): Promise<GNValidationResult[]> {
   const results: GNValidationResult[] = [];
 
   for (const question of doc.questions) {
-    if (!LIST_OF_LAWS_QUESTIONS.has(question.number)) continue;
+    // Key on internalNumber — `question.number` is the analyst-facing
+    // identifier which post-Req1 is a text-fallback string for many docs.
+    if (!LIST_OF_LAWS_QUESTIONS.has(question.internalNumber)) continue;
     if (!question.citation) continue;
     if (question.citation.text.trim() === 'Not applicable.') continue;
 
