@@ -18,6 +18,7 @@ scripts/*
 !scripts/snapshot-full.mjs
 !scripts/verify-anchor-correctness.mjs
 !scripts/verify-rule-conformance.mjs
+!scripts/verify-spec-implementation.mjs
 !scripts/verify-b1-predicate.mjs
 !scripts/verify-b1-fixture-abcd.mjs
 !scripts/parse-rqf-template.mjs
