@@ -144,4 +144,15 @@ export interface GNValidationResult {
   // When present, the comment anchors to the first occurrence of this text in the cell.
   // When absent, the comment anchors to the full cell.
   matchText?: string;
+  // Per-match replacement spans within the cell text. When present, the
+  // fix-pipeline emits ONE tracked delete + ONE tracked insert per span,
+  // bypassing the standard fast-diff character-level path. Used by rules
+  // that transform whole phrases (F1's "Please refer to Section X above."
+  // → "Please see section X. above.") where character diffing would
+  // produce dozens of scattered single-char edits that read as document
+  // corruption to the analyst even though after-Accept-All text is
+  // mathematically correct. correctedText is still set in parallel for
+  // consumers (assertions, suggestedFix display) that operate on whole
+  // cell text.
+  replaceSpans?: Array<{ start: number; end: number; replacement: string }>;
 }

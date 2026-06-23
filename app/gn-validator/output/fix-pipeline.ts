@@ -57,6 +57,11 @@ export interface ParaState {
   pNode: Element;
   originalText: string;
   currentText: string;
+  // Per-match replacement spans within this paragraph's originalText. When
+  // populated, the OOXML emit path uses one tracked-delete + one tracked-
+  // insert per span instead of running fast-diff. See F1 and
+  // applyReplaceSpansToParagraph in word-diff.ts.
+  replaceSpans?: Array<{ start: number; end: number; replacement: string }>;
 }
 
 export interface CellState {
@@ -178,6 +183,58 @@ export async function runFixPipeline(
         }
         continue;
       }
+    }
+
+    // ── Whole-phrase span replacement (F1-style) ─────────────────────────────
+    //
+    // When the rule supplies replaceSpans (per-match offsets + canonical
+    // replacement strings), the OOXML emit path uses ONE tracked-delete +
+    // ONE tracked-insert per span instead of running fast-diff on
+    // joinedCurrent → joinedFixed. Character-level diffing on a phrase-
+    // level transformation produces dozens of scattered single-char edits
+    // that read as document corruption (B1 multi-row Path A taught us to
+    // bypass the standard pipeline when the standard diff doesn't fit the
+    // rule's shape; this is the same pattern for in-paragraph rewrites).
+    //
+    // Spans are passed in CELL-text coordinates (the cell text is the
+    // joined `\n`-separated paragraph texts). This branch resolves each
+    // span to the per-paragraph offset and attaches it to that para's
+    // ParaState.replaceSpans for applyCellDiffs to emit.
+    if (result.replaceSpans && result.replaceSpans.length > 0) {
+      const paraStarts: number[] = [];
+      let runningOffset = 0;
+      for (const para of cs.paragraphs) {
+        paraStarts.push(runningOffset);
+        runningOffset += para.originalText.length + 1;  // +1 for the '\n' separator
+      }
+      // Spans must not cross paragraph boundaries (F1 cross-refs are inline).
+      // Drop any that do — false-negative-safe vs corrupting the doc.
+      for (const sp of result.replaceSpans) {
+        let paraIdx = -1;
+        for (let i = 0; i < cs.paragraphs.length; i++) {
+          const start = paraStarts[i];
+          const end = start + cs.paragraphs[i].originalText.length;
+          if (sp.start >= start && sp.end <= end) { paraIdx = i; break; }
+        }
+        if (paraIdx < 0) continue;
+        const localStart = sp.start - paraStarts[paraIdx];
+        const localEnd = sp.end - paraStarts[paraIdx];
+        const para = cs.paragraphs[paraIdx];
+        if (!para.replaceSpans) para.replaceSpans = [];
+        para.replaceSpans.push({
+          start: localStart,
+          end: localEnd,
+          replacement: sp.replacement,
+        });
+        // Update currentText so downstream consumers (other rules that
+        // re-read joinedCurrent in a later iteration) see the rewritten
+        // text — the same invariant fast-diff produces.
+        para.currentText =
+          para.currentText.slice(0, localStart) +
+          sp.replacement +
+          para.currentText.slice(localEnd);
+      }
+      continue;
     }
 
     const fixFn = fixReg.get(result.ruleId);

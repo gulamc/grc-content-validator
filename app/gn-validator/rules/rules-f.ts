@@ -41,14 +41,45 @@ export function applyF1Fix(text: string): string {
   );
 }
 
+/**
+ * Compute the F1 replacement spans for a response text. Each span is one
+ * whole non-canonical cross-reference + its canonical replacement. Used by
+ * the fix-pipeline to emit ONE tracked delete + ONE tracked insert per
+ * match (vs character-level fast-diff which scatters the rewrite into
+ * dozens of single-char edits that read as document corruption to the
+ * analyst even when the after-Accept-All text is mathematically correct).
+ */
+export function findF1ReplaceSpans(
+  text: string,
+): Array<{ start: number; end: number; replacement: string }> {
+  const spans: Array<{ start: number; end: number; replacement: string }> = [];
+  const re = new RegExp(F1_CROSS_REF_RE.source, F1_CROSS_REF_RE.flags);
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const num = m[1];
+    const direction = m[2].toLowerCase();
+    const canonical = `Please see section ${num}. ${direction}.`;
+    if (m[0] === canonical) continue;  // already canonical
+    spans.push({ start: m.index, end: m.index + m[0].length, replacement: canonical });
+  }
+  return spans;
+}
+
 export async function ruleF1(doc: GNDocument): Promise<GNValidationResult[]> {
   const results: GNValidationResult[] = [];
   for (const question of doc.questions) {
     if (!question.response) continue;
     const text = question.response.text;
     if (!text.trim()) continue;
-    const fixed = applyF1Fix(text);
-    if (fixed === text) continue;
+    const spans = findF1ReplaceSpans(text);
+    if (spans.length === 0) continue;
+    // Build correctedText by applying spans (used for content-preservation
+    // assertions and the suggestedFix display).
+    let corrected = text;
+    for (let i = spans.length - 1; i >= 0; i--) {
+      const s = spans[i];
+      corrected = corrected.slice(0, s.start) + s.replacement + corrected.slice(s.end);
+    }
     results.push({
       ruleId: 'F1',
       questionNumber: question.number,
@@ -56,7 +87,8 @@ export async function ruleF1(doc: GNDocument): Promise<GNValidationResult[]> {
       severity: 'error',
       message: 'Cross-reference format: use "Please see section X.Y.Z. above." or "...below." (lowercase "section", period after the number, "Please" + "see" required).',
       fixType: 'auto',
-      correctedText: fixed,
+      correctedText: corrected,
+      replaceSpans: spans,
     });
   }
   return results;
