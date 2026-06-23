@@ -30,13 +30,29 @@ import type { GNValidationResult } from '../types';
 
 // Flag-only content-validity rules whose firing suppresses formatting
 // auto-fixes on the same cell.
+//
+// Membership criterion: the rule judges that the cell contains the
+// WRONG KIND of thing (a placeholder where a citation belongs, laws
+// where the canonical "Not applicable." belongs, etc.). The cell's
+// content needs to be REPLACED, so tidying its formatting is wasted
+// and risks masking the analyst-facing flag.
+//
+// I2 (response completeness) is deliberately NOT in this set. I2 flags
+// responses below a substantive-token threshold — that's a JUDGMENT OF
+// INSUFFICIENCY, not a categorical wrong-kind. When I2 is right, the
+// cell will be rewritten and any formatting fix on the current content
+// is moot. But when I2 false-positives (an analyst legitimately answers
+// "DPD." as a complete answer for a definition question), suppressing
+// G7's curly-quote-fix or D3's period-strip would silently drop a
+// legitimate fix on legitimate content. Categorical content-validity
+// rules don't have this failure mode; threshold-based rules do. I2
+// still flags (the signal is valuable), but doesn't suppress.
 const CONTENT_VALIDITY_SUPPRESSORS = new Set<string>([
   'B3',  // List-of-laws citation must be "Not applicable."
   'B5',  // Valid citation content (against allowed/invalid spec lists)
   'C1',  // Valid persona values
   'C3',  // Persona consistency within legal basis subsection
   'E2',  // GDPR national interpretation must be cited (EU GNs only)
-  'I2',  // Response completeness (substantively answers the question)
 ]);
 
 // Formatting auto-fix rules whose findings get suppressed on cells where
