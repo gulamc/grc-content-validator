@@ -11,11 +11,12 @@ let fixRegistry: Map<string, FixFn> | null = null;
 async function getFixRegistry(): Promise<Map<string, FixFn>> {
   if (fixRegistry) return fixRegistry;
 
-  const [rulesB, rulesC, rulesD, rulesE, rulesG, rulesH] = await Promise.all([
+  const [rulesB, rulesC, rulesD, rulesE, rulesF, rulesG, rulesH] = await Promise.all([
     import('../rules/rules-b'),
     import('../rules/rules-c'),
     import('../rules/rules-d'),
     import('../rules/rules-e'),
+    import('../rules/rules-f'),
     import('../rules/rules-g'),
     import('../rules/rules-h'),
   ]);
@@ -30,6 +31,7 @@ async function getFixRegistry(): Promise<Map<string, FixFn>> {
     ['D3', (t) => rulesD.applyD3Fix(t)],
     ['D4', (t) => rulesD.applyD4Fix(t)],
     ['E1', (t) => rulesE.applyE1Fix(t)],
+    ['F1', (t) => rulesF.applyF1Fix(t)],
     ['G2', (t) => rulesG.applyG2Fix(t)],
     ['G7', (t) => rulesG.applyG7Fix(t)],
     ['G11', (t) => rulesG.applyG11Fix(t)],

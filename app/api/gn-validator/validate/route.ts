@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { GNType } from '@/app/gn-validator/types';
 import { parseGNDocument } from '@/app/gn-validator/parser';
 import { runGNRules } from '@/app/gn-validator/rules/index';
+import { applyContentValidityGuard } from '@/app/gn-validator/rules/content-validity-guard';
 import { generateDocx } from '@/app/gn-validator/output/index';
 import { ALL_JURISDICTIONS, isEUJurisdiction } from '@/app/gn-validator/utils/jurisdictions';
 
@@ -62,7 +63,13 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const results = await runGNRules(doc);
+    const rawResults = await runGNRules(doc);
+    // Content-first guard: drop formatting auto-fix findings on cells where
+    // a content-validity rule (B3, B5, C1, C3, E2, I2) fired. Don't tidy
+    // HOW a cell is punctuated when the rule already flagged WHAT the cell
+    // should contain. See app/gn-validator/rules/content-validity-guard.ts
+    // for the full rationale + set membership.
+    const results = applyContentValidityGuard(rawResults);
 
     const outputBuf = await generateDocx(doc, results);
 

@@ -36,6 +36,7 @@ const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 
 const { parseGNDocument } = await import(`${root}/app/gn-validator/parser.ts`);
 const { RULE_FNS } = await import(`${root}/app/gn-validator/rules/index.ts`);
+const { applyContentValidityGuard } = await import(`${root}/app/gn-validator/rules/content-validity-guard.ts`);
 const { generateDocx } = await import(`${root}/app/gn-validator/output/index.ts`);
 const { buildCellMap, buildCellIdIndex } = await import(`${root}/app/gn-validator/output/cell-map.ts`);
 
@@ -44,11 +45,11 @@ const FIXTURE_OUTPUT = `${root}/samples/fixtures/fixture-req1-realtest-output.do
 const CONNECTICUT_INPUT = `${root}/samples/Connecticut - Privacy Overview Guidance Note (2) (1).docx`;
 
 async function runAllRules(doc) {
-  const out = [];
+  const raw = [];
   for (const [, fn] of Object.entries(RULE_FNS)) {
-    try { out.push(...(await fn(doc))); } catch {}
+    try { raw.push(...(await fn(doc))); } catch {}
   }
-  return out;
+  return applyContentValidityGuard(raw);
 }
 
 function getChildren(node, ln) {

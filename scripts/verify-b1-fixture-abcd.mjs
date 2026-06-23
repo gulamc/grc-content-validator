@@ -36,20 +36,21 @@ const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 
 const { parseGNDocument } = await import(`${root}/app/gn-validator/parser.ts`);
 const { RULE_FNS } = await import(`${root}/app/gn-validator/rules/index.ts`);
+const { applyContentValidityGuard } = await import(`${root}/app/gn-validator/rules/content-validity-guard.ts`);
 const { generateDocx } = await import(`${root}/app/gn-validator/output/index.ts`);
 const { buildCellMap, buildCellIdIndex } = await import(`${root}/app/gn-validator/output/cell-map.ts`);
 
-// Mirrors what the other verify scripts use: iterate RULE_FNS directly
-// instead of going through runGNRules's DB-backed config loader. The
-// validate route in production loads the same RULE_FNS map; the only
-// difference is the DB lookup gates whether each rule is `is_active`.
-// For an isolated fixture this isn't material.
+// Mirrors the validate route exactly: run every RULE_FNS entry, then
+// apply the content-first guard before delivering the results to the
+// downstream pipeline. The guard suppresses formatting auto-fixes on
+// cells where a content-validity rule fired, keeping display ↔ output
+// in lock-step.
 async function runAllRules(doc) {
-  const out = [];
+  const raw = [];
   for (const [, fn] of Object.entries(RULE_FNS)) {
-    try { out.push(...(await fn(doc))); } catch {}
+    try { raw.push(...(await fn(doc))); } catch {}
   }
-  return out;
+  return applyContentValidityGuard(raw);
 }
 
 const INPUT_PATH  = `${root}/samples/fixtures/fixture-b1-realtest-input.docx`;

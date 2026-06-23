@@ -385,3 +385,59 @@ export async function ruleB4(_doc: GNDocument): Promise<GNValidationResult[]> {
   // TODO Phase 1E (AI-evaluated)
   return [];
 }
+
+// ── B5 — Valid Citation Content ──────────────────────────────────────────────
+//
+// Reads the canonical INVALID placeholder list from
+// `app/gn-validator/spec/dimension-spec.xlsx` (row B5, Fail Criteria
+// column) via `loadCitationContentSpec`. Whole-cell text match against
+// the INVALID set, case-insensitive, trailing-punctuation tolerant
+// (full stop, comma, semicolon, colon, exclamation, question mark).
+//
+// Pass-one is deterministic-only: matches against the explicit INVALID
+// list. The heuristic short-non-citation-shaped branch was deliberately
+// dropped because bare acronyms (GLBA, HIPAA) and short statute refs
+// (§42-525, C-741/21) can be both short and not match a citation-shape
+// detector — false-negative-safe.
+//
+// One finding per cell, not per line. For multi-row consolidated
+// citations the whole consolidated text is matched (no per-line scan).
+import { loadCitationContentSpec } from '../spec/load-spec';
+
+const B5_SPEC = loadCitationContentSpec();
+const B5_INVALID_NORMALIZED = new Set(
+  B5_SPEC.invalidPlaceholders.map(p => p.toLowerCase()),
+);
+
+function normalizeForB5Match(text: string): string {
+  const trimmed = text.trim().toLowerCase();
+  // Strip trailing punctuation, but preserve the original when stripping
+  // would reduce the value to the empty string. This handles INVALID
+  // entries like "." and "—" — stripping their trailing punctuation
+  // would collapse them to "" which would either fail to match or
+  // (worse) silently match empty cells. Empty cells are filtered earlier
+  // by `!text.trim()` so the symmetric preserve is safe.
+  const stripped = trimmed.replace(/[.,;:!?]+$/, '');
+  return stripped || trimmed;
+}
+
+export async function ruleB5(doc: GNDocument): Promise<GNValidationResult[]> {
+  const results: GNValidationResult[] = [];
+  for (const question of doc.questions) {
+    if (!question.citation) continue;
+    const text = question.citation.text;
+    if (!text.trim()) continue;  // A3 handles blank
+    const normalized = normalizeForB5Match(text);
+    if (B5_INVALID_NORMALIZED.has(normalized)) {
+      results.push({
+        ruleId: 'B5',
+        questionNumber: question.number,
+        field: 'citation',
+        severity: 'error',
+        message: `Citation content "${text.trim()}" is not a valid citation or an allowed placeholder. Use an actual citation or "Not applicable."`,
+        fixType: 'flag',
+      });
+    }
+  }
+  return results;
+}

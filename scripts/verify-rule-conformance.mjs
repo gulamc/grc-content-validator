@@ -65,6 +65,7 @@ const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const { parseGNDocument } = await import(`${root}/app/gn-validator/parser.ts`);
 const { generateDocx } = await import(`${root}/app/gn-validator/output/index.ts`);
 const { RULE_FNS } = await import(`${root}/app/gn-validator/rules/index.ts`);
+const { applyContentValidityGuard } = await import(`${root}/app/gn-validator/rules/content-validity-guard.ts`);
 const { buildCellMap, buildCellIdIndex } = await import(`${root}/app/gn-validator/output/cell-map.ts`);
 
 // ── SPEC source of truth ─────────────────────────────────────────────────────
@@ -106,11 +107,14 @@ function loadSpecFixTypes() {
 const SPEC_FIXTYPE = loadSpecFixTypes();
 
 async function runAll(doc) {
-  const results = [];
+  const raw = [];
   for (const [, fn] of Object.entries(RULE_FNS)) {
-    try { results.push(...(await fn(doc))); } catch {}
+    try { raw.push(...(await fn(doc))); } catch {}
   }
-  return results;
+  // Mirror the validate route: apply the content-first guard before
+  // returning. The conformance gate must see exactly what the analyst
+  // sees, not the pre-guard raw findings.
+  return applyContentValidityGuard(raw);
 }
 
 const docs = [

@@ -93,6 +93,59 @@ function extractRuleBody(source, ruleId) {
   const start = i;
   for (; i < source.length; i++) {
     const c = source[i];
+    // Skip line comments — an apostrophe inside one (e.g. "H5's")
+    // would otherwise start a phantom string-mode that consumes braces
+    // across many lines.
+    if (c === '/' && source[i + 1] === '/') {
+      while (i < source.length && source[i] !== '\n') i++;
+      continue;
+    }
+    // Skip block comments.
+    if (c === '/' && source[i + 1] === '*') {
+      i += 2;
+      while (i < source.length - 1 && !(source[i] === '*' && source[i + 1] === '/')) i++;
+      i++;  // skip the closing '/'
+      continue;
+    }
+    // Skip regex literals — an apostrophe inside the regex (e.g.
+    // /Author'?s/) would otherwise start a phantom string-mode that
+    // consumes lines until the next stray apostrophe. Heuristic:
+    // `/` is a regex literal when preceded (after whitespace) by
+    // an operator / open punctuation token, AND followed by non-
+    // whitespace and a closing `/` on the same line. Otherwise treat
+    // it as division and move on.
+    if (c === '/' && i + 1 < source.length && source[i + 1] !== '/' && source[i + 1] !== '*') {
+      let j = i - 1;
+      while (j >= 0 && /\s/.test(source[j])) j--;
+      const prev = j >= 0 ? source[j] : '';
+      // Regex-context predecessors. Also treat start-of-input as regex.
+      const isRegexContext = j < 0 || /[=,(\[!:?&|;{}]/.test(prev);
+      if (isRegexContext) {
+        let k = i + 1;
+        while (k < source.length && source[k] !== '\n') {
+          if (source[k] === '\\') { k += 2; continue; }
+          if (source[k] === '[') {
+            // Character class — skip until closing ]
+            k++;
+            while (k < source.length && source[k] !== ']') {
+              if (source[k] === '\\') { k += 2; continue; }
+              k++;
+            }
+            k++;
+            continue;
+          }
+          if (source[k] === '/') break;
+          k++;
+        }
+        // If we found a closing /, skip past it + any flags.
+        if (k < source.length && source[k] === '/') {
+          k++;
+          while (k < source.length && /[gimsuy]/.test(source[k])) k++;
+          i = k - 1;  // outer for-loop will i++
+          continue;
+        }
+      }
+    }
     if (c === '{') depth++;
     else if (c === '}') {
       depth--;

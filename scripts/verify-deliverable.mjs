@@ -30,16 +30,19 @@ const root = '/Users/user/grc-content-validator/grc-content-validator';
 const { parseGNDocument } = await import(`${root}/app/gn-validator/parser.ts`);
 const { generateDocx } = await import(`${root}/app/gn-validator/output/index.ts`);
 const { RULE_FNS } = await import(`${root}/app/gn-validator/rules/index.ts`);
+const { applyContentValidityGuard } = await import(`${root}/app/gn-validator/rules/content-validity-guard.ts`);
 
 // Mirrors the validate route: no multi-row downgrade. B1 multi-row Path A
 // write-back lives entirely in `app/gn-validator/output/fix-pipeline.ts`,
 // so the harness exercises the same path an analyst's upload runs through.
+// Apply the content-first guard before delivering results — same as
+// validate/route.ts does in production.
 async function runAll(doc) {
-  const results = [];
+  const raw = [];
   for (const [, fn] of Object.entries(RULE_FNS)) {
-    try { results.push(...(await fn(doc))); } catch {}
+    try { raw.push(...(await fn(doc))); } catch {}
   }
-  return results;
+  return applyContentValidityGuard(raw);
 }
 
 const docs = [
