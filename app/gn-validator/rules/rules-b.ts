@@ -338,6 +338,21 @@ export async function ruleB2(doc: GNDocument): Promise<GNValidationResult[]> {
 
 const LIST_OF_LAWS_QUESTIONS = new Set(['1.1.1']);
 
+// Near-canonical "Not applicable" matcher. A cell that contains the
+// canonical placeholder modulo case and trailing punctuation (e.g.
+// "Not applicable" missing the period, or "NOT APPLICABLE.") is the
+// correct semantic answer for a list-of-laws question — the only issue
+// is punctuation, which is D1/D3's job, not B3's. Without this
+// normalisation B3 over-fires on these near-canonical cells with the
+// wrong message ("laws belong in the Response") when there are no
+// laws in the cell at all, only a punctuation typo. Before the content-
+// first guard this was masked by D1 silently fixing the period; the
+// guard exposes the over-fire, so the fix is to make B3 not fire here.
+function normalizesToNotApplicable(text: string): boolean {
+  const normalized = text.trim().toLowerCase().replace(/[.,;:!?]+$/, '');
+  return normalized === 'not applicable';
+}
+
 // B3 — No Citations in List-of-Laws Questions
 export async function ruleB3(doc: GNDocument): Promise<GNValidationResult[]> {
   const results: GNValidationResult[] = [];
@@ -347,7 +362,10 @@ export async function ruleB3(doc: GNDocument): Promise<GNValidationResult[]> {
     // identifier which post-Req1 is a text-fallback string for many docs.
     if (!LIST_OF_LAWS_QUESTIONS.has(question.internalNumber)) continue;
     if (!question.citation) continue;
-    if (question.citation.text.trim() === 'Not applicable.') continue;
+    // Skip when the cell is already the canonical placeholder or a
+    // near-canonical variant (case/punctuation tolerant — see
+    // normalizesToNotApplicable).
+    if (normalizesToNotApplicable(question.citation.text)) continue;
 
     results.push({
       ruleId: 'B3',
