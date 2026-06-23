@@ -88,6 +88,7 @@ let aPass = true;
 function check(label, ok, detail = '') {
   console.log(`  ${ok ? '✅' : '❌'} ${label}${detail ? ': ' + detail : ''}`);
   if (!ok) aPass = false;
+  return ok;
 }
 
 check('POSITIVE question found in fixture', !!positiveQ);
@@ -135,46 +136,76 @@ check(
 );
 console.log(`  ── (a) verdict: ${aPass ? '✅ PASS' : '❌ FAIL'}\n`);
 
-// ── (b) OUTPUT DOCX ────────────────────────────────────────────────────────
-console.log('── (b) OUTPUT DOCX ─────────────────────────────────────────────────');
+// ── (b) OUTPUT DOCX — UNCHANGED-BY-DESIGN ──────────────────────────────────
+//
+// Req1 is a DISPLAY-PAYLOAD change. The output docx is unchanged-by-design
+// because:
+//   - Comments anchor to <w:tc> by positional cellId resolution (the SAME
+//     cellId resolves whether the displayed identifier is "1.1.2" or text-
+//     fallback "1.1 / Furthermore…"; only the key STRING differs, the
+//     physical cell is the same).
+//   - Comment text does NOT embed questionNumber — it embeds the rule's
+//     message text, which is unaffected by Req1.
+//   - Tracked changes sit on the physical cell, again unaffected.
+//
+// So a meaningful (b) check is: "the docx is structurally equivalent to
+// what the pre-Req1 code would have produced." We simulate the pre-Req1
+// state by reverting q.number to q.internalNumber on a clone of the
+// parsed doc, re-running rules + generateDocx, and comparing the output
+// docx's GN ins/del/commentRangeStart/comment counts AND the sorted set
+// of GN comment text. A green (b) here means "Req1 did not accidentally
+// move any anchor or change any comment text"; the meaningful PROOF of
+// Req1 lives in (c) on the DISPLAY payload.
+console.log('── (b) OUTPUT DOCX — UNCHANGED-BY-DESIGN ───────────────────────────');
 let bPass = true;
 const results = await runAllRules(doc);
 const outBuf = await generateDocx(doc, results);
 writeFileSync(FIXTURE_OUTPUT, Buffer.from(outBuf));
 
-const outZip = await JSZip.loadAsync(outBuf);
-const outDocXml = await outZip.file('word/document.xml').async('string');
-const outCommentsXml = await outZip.file('word/comments.xml')?.async('string') ?? '';
-const cDom = new DOMParser().parseFromString(outCommentsXml, 'text/xml');
-const cEls = cDom.documentElement
-  ? cDom.documentElement.getElementsByTagNameNS(W, 'comment')
-  : [];
+// Build the pre-Req1 equivalent docx.
+const preDoc = { ...doc, questions: doc.questions.map(q => ({ ...q, number: q.internalNumber })) };
+const rawPre = [];
+for (const [, fn] of Object.entries(RULE_FNS)) {
+  try { rawPre.push(...(await fn(preDoc))); } catch {}
+}
+const preResults = applyContentValidityGuard(rawPre);
+const preOutBuf = await generateDocx(preDoc, preResults);
 
-// Comment text — does any comment contain the text-fallback identifier?
-const commentTexts = [];
-for (let i = 0; i < cEls.length; i++) {
-  const c = cEls[i];
-  if (c.getAttribute('w:author') !== 'GN Validator') continue;
-  const ts = c.getElementsByTagNameNS(W, 't');
-  let text = '';
-  for (let j = 0; j < ts.length; j++) text += ts[j].textContent ?? '';
-  commentTexts.push(text);
+async function snapshotForCompare(buf) {
+  const z = await JSZip.loadAsync(buf);
+  const docXml = await z.file('word/document.xml').async('string');
+  const commentsXml = await z.file('word/comments.xml')?.async('string') ?? '';
+  const cDom = new DOMParser().parseFromString(commentsXml, 'text/xml');
+  const els = cDom.documentElement ? cDom.documentElement.getElementsByTagNameNS(W, 'comment') : [];
+  const texts = [];
+  for (let i = 0; i < els.length; i++) {
+    const c = els[i];
+    if (c.getAttribute('w:author') !== 'GN Validator') continue;
+    const ts = c.getElementsByTagNameNS(W, 't');
+    let t = '';
+    for (let j = 0; j < ts.length; j++) t += ts[j].textContent ?? '';
+    texts.push(t);
+  }
+  return {
+    gnIns: (docXml.match(/<w:ins[^>]*w:author="GN Validator"/g) ?? []).length,
+    gnDel: (docXml.match(/<w:del[^>]*w:author="GN Validator"/g) ?? []).length,
+    rangeStarts: (docXml.match(/<w:commentRangeStart\s/g) ?? []).length,
+    commentsSorted: [...texts].sort(),
+  };
 }
-console.log(`  GN comments in fixture output: ${commentTexts.length}`);
-for (const t of commentTexts.slice(0, 6)) {
-  console.log(`    • ${JSON.stringify(t.slice(0, 110))}${t.length > 110 ? '…' : ''}`);
-}
-// Each comment should start with "[RULE] " and then contain the new text-
-// based identifier (or "1.1 / ..." prefix), not a stand-alone resolver
-// "1.1.1" — verify no comment contains the resolver pattern as a sole
-// identifier (i.e. no "[RULE] 1.1.1 Q text..." with the number being the
-// id).
-const commentsUseResolverId = commentTexts.some(t => /^\[\w+\]\s+\d+\.\d+\.\d+\s/.test(t));
-check(
-  'Comments use text-based identifier, not a stand-alone resolver number',
-  !commentsUseResolverId,
-);
-console.log(`  ── (b) verdict: ${bPass ? '✅ PASS' : '❌ FAIL'}\n`);
+const postSnap = await snapshotForCompare(outBuf);
+const preSnap = await snapshotForCompare(preOutBuf);
+console.log(`  post-Req1: gnIns=${postSnap.gnIns}, gnDel=${postSnap.gnDel}, rangeStart=${postSnap.rangeStarts}, comments=${postSnap.commentsSorted.length}`);
+console.log(`  pre-Req1:  gnIns=${preSnap.gnIns},  gnDel=${preSnap.gnDel},  rangeStart=${preSnap.rangeStarts},  comments=${preSnap.commentsSorted.length}`);
+bPass = check('docx structural counts unchanged from pre-Req1 equivalent',
+  postSnap.gnIns === preSnap.gnIns &&
+  postSnap.gnDel === preSnap.gnDel &&
+  postSnap.rangeStarts === preSnap.rangeStarts &&
+  postSnap.commentsSorted.length === preSnap.commentsSorted.length) && bPass;
+bPass = check('GN comment-text set unchanged from pre-Req1 equivalent',
+  postSnap.commentsSorted.length === preSnap.commentsSorted.length &&
+  postSnap.commentsSorted.every((t, i) => t === preSnap.commentsSorted[i])) && bPass;
+console.log(`  ── (b) verdict: ${bPass ? '✅ PASS (docx unchanged — Req1 fix lives in (c), not here)' : '❌ FAIL'}\n`);
 
 // ── (c) DISPLAY ────────────────────────────────────────────────────────────
 console.log('── (c) DISPLAY (findings payload as the UI receives it) ────────────');
@@ -211,6 +242,8 @@ console.log(`  ── (c) verdict: ${cPass ? '✅ PASS' : '❌ FAIL'}\n`);
 // ── (d) DISPLAY ↔ OUTPUT MATCH ─────────────────────────────────────────────
 console.log('── (d) DISPLAY ↔ OUTPUT MATCH ──────────────────────────────────────');
 let dPass = true;
+const outZip = await JSZip.loadAsync(outBuf);
+const outDocXml = await outZip.file('word/document.xml').async('string');
 const { cellMap: outCellMap } = await buildCellMap(outZip, outDocXml);
 const outCellIdIndex = buildCellIdIndex(doc, outCellMap);
 
