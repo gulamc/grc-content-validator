@@ -200,12 +200,23 @@ export async function ruleG2(doc: GNDocument): Promise<GNValidationResult[]> {
 
 // Q1.2.2 is the supervisory-authority contact-info cell across all GN templates.
 // It contains structured address data (street numbers, ordinals like "7ème") that
-// G3 must not flag — these are not running prose.
-const G3_EXCLUDED_QUESTIONS = new Set(['1.2.2']);
+// G3 must not flag — these are not running prose. Keyed on internalNumber so
+// the exclusion survives Req1's identifier change (the analyst-facing
+// `question.number` is a text-fallback string for many docs post-Req1).
+const G3_EXCLUDED_INTERNAL_NUMBERS = new Set(['1.2.2']);
 
 export async function ruleG3(doc: GNDocument): Promise<GNValidationResult[]> {
   const all = await runScorerRule('numbers', 'G3', doc);
-  return all.filter(r => !G3_EXCLUDED_QUESTIONS.has(r.questionNumber));
+  // Map excluded internal numbers to their corresponding display numbers,
+  // since the scorer-rule wrapper emits findings tagged with `question.number`
+  // (the displayed identifier). One internal number can map to one display
+  // string; the lookup table is small.
+  const excludedDisplay = new Set(
+    doc.questions
+      .filter(q => G3_EXCLUDED_INTERNAL_NUMBERS.has(q.internalNumber))
+      .map(q => q.number),
+  );
+  return all.filter(r => !excludedDisplay.has(r.questionNumber));
 }
 
 // ── G4 — Date Format ─────────────────────────────────────────────────────────

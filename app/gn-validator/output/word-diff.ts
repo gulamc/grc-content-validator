@@ -326,6 +326,70 @@ function buildInsertedParagraph(
   return p;
 }
 
+// ── Span-level replacement (whole-phrase, not char-diff) ──────────────────────
+//
+// Used by rules like F1 whose rewrite is a phrase-level transformation
+// ("Please refer to Section 3.2.1 above." → "Please see section 3.2.1.
+// above."). Character-level fast-diff on such a transformation produces
+// scattered single-char edits (`<w:del>r</w:del><w:ins>s</w:ins><w:r>e
+// </w:r><w:del>f</w:del>…`) that, even when after-Accept-All text is
+// mathematically correct, read as document corruption in Word's tracked-
+// changes view because each character ends up in its own `<w:r>` run.
+//
+// This function emits exactly ONE `<w:del>` (for the matched span) and
+// ONE `<w:ins>` (for the canonical replacement) per span. The rPr of
+// the surrounding text inherits from whichever source run covered each
+// position, preserving formatting.
+export function applyReplaceSpansToParagraph(
+  p: Element,
+  originalText: string,
+  spans: Array<{ start: number; end: number; replacement: string }>,
+  nextId: () => number,
+  ownerDoc: Document,
+): void {
+  if (spans.length === 0) return;
+  const { runs, passthroughs, pPrXml } = buildParaRunMap(p);
+
+  // Clear paragraph content (preserve pPr).
+  while (p.firstChild) p.removeChild(p.firstChild);
+  if (pPrXml) p.appendChild(ownerDoc.importNode(parseXmlFrag(pPrXml).documentElement, true));
+
+  // Sort spans by start position so we walk the text left-to-right.
+  const sortedSpans = [...spans].sort((a, b) => a.start - b.start);
+  let pos = 0;
+  let ptIdx = 0;
+  function flushPassthroughs(upToPos: number): void {
+    while (ptIdx < passthroughs.length && passthroughs[ptIdx].afterCommittedPos <= upToPos) {
+      p.appendChild(ownerDoc.importNode(passthroughs[ptIdx].node, true));
+      ptIdx++;
+    }
+  }
+
+  for (const sp of sortedSpans) {
+    if (sp.start > pos) {
+      // Emit EQUAL prose preceding this span.
+      flushPassthroughs(pos);
+      const equalText = originalText.slice(pos, sp.start);
+      p.appendChild(makeRunEl(ownerDoc, equalText, rPrAtPos(runs, pos)));
+      pos = sp.start;
+    }
+    // ONE tracked delete for the entire matched span.
+    flushPassthroughs(pos);
+    const matchedText = originalText.slice(sp.start, sp.end);
+    p.appendChild(makeDelEl(ownerDoc, nextId(), matchedText, rPrAtPos(runs, pos)));
+    // ONE tracked insert for the canonical replacement.
+    p.appendChild(makeInsEl(ownerDoc, nextId(), sp.replacement, rPrAtPos(runs, pos)));
+    pos = sp.end;
+  }
+  // Emit any remaining EQUAL prose after the last span.
+  if (pos < originalText.length) {
+    flushPassthroughs(pos);
+    const equalText = originalText.slice(pos);
+    p.appendChild(makeRunEl(ownerDoc, equalText, rPrAtPos(runs, pos)));
+  }
+  flushPassthroughs(Infinity);
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /** Apply all paragraph-level diffs for a changed cell. */
@@ -335,6 +399,12 @@ export function applyCellDiffs(
   ownerDoc: Document,
 ): void {
   for (const para of cellState.paragraphs) {
+    // If this paragraph carries replace-spans (F1-style whole-phrase fix),
+    // emit them as ONE del + ONE ins each, bypassing fast-diff entirely.
+    if (para.replaceSpans && para.replaceSpans.length > 0) {
+      applyReplaceSpansToParagraph(para.pNode, para.originalText, para.replaceSpans, nextId, ownerDoc);
+      continue;
+    }
     applyDiffToParagraph(para.pNode, para.originalText, para.currentText, nextId, ownerDoc);
   }
 

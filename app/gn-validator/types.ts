@@ -30,9 +30,38 @@ export interface GNCell {
 
 // One question block: the question paragraph + the three content cells (overview/breach/pia have all three).
 export interface GNQuestion {
-  number: string;       // e.g. "5.2.1"
+  number: string;       // e.g. "5.2.1" — DISPLAYED to the analyst; subject to findability rules
   section: string;      // e.g. "5.2"
   questionText: string;
+  // Provenance of `number`. Used by the findability gate to assert that
+  // every displayed identifier is something the analyst can locate in
+  // their document:
+  //   'literal'       — `number` is a LITERAL prefix that appears as text
+  //                     on this question's own paragraph (Ctrl-F'able).
+  //   'text-fallback' — `number` IS the question text (with optional
+  //                     "section / " prefix). The analyst can locate it
+  //                     by reading the prose. Used whenever no literal
+  //                     prefix exists on the question paragraph — even
+  //                     when the resolver computed a number from
+  //                     <w:numPr>+numbering.xml, because we cannot prove
+  //                     Word actually renders that exact string at that
+  //                     paragraph without opening it in Word.
+  numberProvenance: 'literal' | 'text-fallback';
+  // Stable computed identifier (always "X.Y.Z" shape when derivable) for
+  // INTERNAL rule logic that needs a key independent of what's displayed
+  // to the analyst. Pre-Requirement-1 this was what was shown to analysts;
+  // post-Requirement-1, `number` may be a text-fallback string (long, not
+  // numeric), so rules that key on a stable identifier must use
+  // `internalNumber` instead:
+  //   - B3's LIST_OF_LAWS_QUESTIONS exclusion
+  //   - C2's NOT_APPLICABLE_PERSONA_SECTIONS check
+  //   - E1's persona-exempt list
+  //   - G3's structured-data exclusion (Q1.2.2 contact-info cell)
+  //
+  // Always populated. Falls back to questionText (or "section / questionText")
+  // only when neither a literal nor a resolver-derived number exists; in
+  // that case any rule keying on it must accept the text fallback.
+  internalNumber: string;
   response?: GNCell;
   citation?: GNCell;
   persona?: GNCell;     // only overview, breach, pia
@@ -115,4 +144,15 @@ export interface GNValidationResult {
   // When present, the comment anchors to the first occurrence of this text in the cell.
   // When absent, the comment anchors to the full cell.
   matchText?: string;
+  // Per-match replacement spans within the cell text. When present, the
+  // fix-pipeline emits ONE tracked delete + ONE tracked insert per span,
+  // bypassing the standard fast-diff character-level path. Used by rules
+  // that transform whole phrases (F1's "Please refer to Section X above."
+  // → "Please see section X. above.") where character diffing would
+  // produce dozens of scattered single-char edits that read as document
+  // corruption to the analyst even though after-Accept-All text is
+  // mathematically correct. correctedText is still set in parallel for
+  // consumers (assertions, suggestedFix display) that operate on whole
+  // cell text.
+  replaceSpans?: Array<{ start: number; end: number; replacement: string }>;
 }

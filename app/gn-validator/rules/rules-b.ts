@@ -111,13 +111,35 @@ function extractInstrumentTail(segment: string): string | null {
     .replace(/\s*[,;]\s*as\s+amended.*$/i, '')
     .replace(/[.,;:]+$/, '');
 
-  const m = cleaned.match(
-    /\sof\s+(?:the\s+)?([A-Z][A-Za-z][A-Za-z'’\s\-&]{0,80})$/,
+  // Path 1: "...of [the] <noun phrase>"
+  // Character class includes digits, period, slash, parens — required for
+  // instrument tails like "Law No. 58/2019", "Regulation (EU) 2016/679".
+  // Without digits/. /  the class stalls at the first such char and the
+  // anchored "$" never matches, returning null on perfectly clear tails
+  // (the analyst-reported semicolon case "Article 3(1) of Law No. 58/2019"
+  // was failing here before this change).
+  const ofMatch = cleaned.match(
+    /\sof\s+(?:the\s+)?([A-Z][A-Za-z][A-Za-z0-9'’\s\-&./()]{0,80})$/,
   );
-  if (!m) return null;
-  const tail = m[1].trim();
-  if (tail.split(/\s+/).length > 6) return null;
-  return tail.toLowerCase().replace(/\s+/g, ' ');
+  if (ofMatch) {
+    const tail = ofMatch[1].trim();
+    if (tail.split(/\s+/).length > 6) return null;
+    return tail.toLowerCase().replace(/\s+/g, ' ');
+  }
+
+  // Path 2: bare-instrument tail (all-caps acronym, no preceding "of").
+  // Real-world citations like "Article 55(1) GDPR" or "Section 12 CCPA"
+  // append the instrument as an acronym. Tight: 2+ all-caps letters
+  // (optionally hyphenated / multi-word) at end of segment. Two-letter
+  // minimum lets "EU"-style suffixes through. The leading "\s" anchors
+  // to a word boundary; a segment whose tail is digits/lowercase won't
+  // match (e.g. "Article 5(1)" → null → don't split).
+  const bareMatch = cleaned.match(/\s([A-Z]{2,}(?:[\s-][A-Z]{2,})*)$/);
+  if (bareMatch) {
+    return bareMatch[1].toLowerCase().replace(/\s+/g, ' ');
+  }
+
+  return null;
 }
 
 /**
@@ -144,6 +166,23 @@ function shouldSplit(left: string, right: string): boolean {
  */
 function hasAndJoinedLaws(text: string): boolean {
   return text.split('\n').some(line => splitOnAndNotInParens(line).length > 1);
+}
+
+/**
+ * Trigger: any "; " boundary in `text` where the right side starts with a
+ * citation prefix AND the two sides reference different instruments. Mirrors
+ * `splitOnSemicolonNotInParens` so detection and rewrite cannot diverge.
+ *
+ * Added after the analyst-reported NEW-template Direct Marketing case
+ *   "Article 55(1) GDPR; Article 3(1) of Law No. 58/2019;
+ *    Articles 13-D and 13-G of Law No. 41/2004"
+ * where the three different-instrument citations are joined by ";" rather
+ * than "and"/period. Same false-negative-safe gate as the other splitters:
+ * we only split when `shouldSplit` confirms both sides reference distinct
+ * named instruments.
+ */
+function hasSemicolonJoinedLaws(text: string): boolean {
+  return text.split('\n').some(line => splitOnSemicolonNotInParens(line).length > 1);
 }
 
 /**
@@ -211,20 +250,79 @@ function splitOnAndNotInParens(segment: string): string[] {
   return parts;
 }
 
+/**
+ * Split a segment on "; " boundaries where:
+ *   1. ";" is NOT inside an unclosed parenthetical (parenthetical guard),
+ *   2. the text after ";" starts with a recognised citation prefix, and
+ *   3. the left and right sides reference DIFFERENT instruments.
+ *
+ * Keeps the trailing ";" on the left segment (matches the analyst's
+ * expected three-line form: "Article 55(1) of GDPR;" / "Article 3(1) of
+ * Law No. 58/2019;" / "Articles 13-D and 13-G of Law No. 41/2004").
+ */
+function splitOnSemicolonNotInParens(segment: string): string[] {
+  const semiRe = /;\s+/g;
+  const parts: string[] = [];
+  let start = 0;
+  let match: RegExpExecArray | null;
+  while ((match = semiRe.exec(segment)) !== null) {
+    const preceding = segment.slice(0, match.index);
+    const lastOpen = preceding.lastIndexOf('(');
+    const lastClose = preceding.lastIndexOf(')');
+    if (lastOpen > lastClose) continue;
+    const rightStart = segment.slice(match.index + match[0].length);
+    if (!startsWithCitationPrefix(rightStart)) continue;
+    const leftSegment = segment.slice(start, match.index + 1); // keep the ";"
+    if (!shouldSplit(leftSegment, rightStart)) continue;
+    parts.push(leftSegment);
+    start = match.index + match[0].length;
+  }
+  parts.push(segment.slice(start));
+  return parts.filter(p => p.trim());
+}
+
+/**
+ * Normalise a bare-instrument citation tail to the canonical "of [Instrument]"
+ * form. "Article 55(1) GDPR;" → "Article 55(1) of GDPR;". Only applied to
+ * lines that begin with a recognised citation prefix (so non-citation prose
+ * is never touched), and only when no preceding "of"/"the" already supplies
+ * the connector.
+ */
+function normalizeBareInstrumentTail(line: string): string {
+  const trimmed = line.trimStart();
+  if (!startsWithCitationPrefix(trimmed)) return line;
+  return line.replace(
+    /\s([A-Z]{2,}(?:[\s-][A-Z]{2,})*)([.,;:]?)$/,
+    (match, acronym: string, punct: string, offset: number, full: string) => {
+      const before = full.slice(0, offset);
+      if (/\b(?:of|the)\s*$/i.test(before)) return match;
+      return ` of ${acronym}${punct}`;
+    },
+  );
+}
+
 export function applyB1Fix(cellText: string): string {
   const lines = cellText.split('\n').map(line => line.replace(BULLET_RE, '').trimEnd());
   const expanded: string[] = [];
   for (const line of lines) {
     if (!line.trim()) { expanded.push(line); continue; }
-    // Split on ". " citation boundaries first, then on " and " boundaries
-    // (guarded against splitting inside parenthetical statute/guideline titles).
+    // Split on ". " citation boundaries first, then on "; " boundaries,
+    // then on " and " boundaries. All splitters share the parenthetical
+    // guard and the shouldSplit different-instrument gate, so detection
+    // and rewrite stay aligned.
     const periodSplit = splitPeriodJoinedLine(line);
-    for (const segment of periodSplit) {
-      const andParts = splitOnAndNotInParens(segment);
-      expanded.push(...andParts.map(p => p.trimEnd()));
+    for (const periodSeg of periodSplit) {
+      const semiSplit = splitOnSemicolonNotInParens(periodSeg);
+      for (const semiSeg of semiSplit) {
+        const andParts = splitOnAndNotInParens(semiSeg);
+        expanded.push(...andParts.map(p => p.trimEnd()));
+      }
     }
   }
-  return expanded.filter((l, i) => l.trim() !== '' || i === 0).join('\n');
+  return expanded
+    .filter((l, i) => l.trim() !== '' || i === 0)
+    .map(normalizeBareInstrumentTail)
+    .join('\n');
 }
 
 // B1 — Citation Field Formatting
@@ -242,6 +340,7 @@ export async function ruleB1(doc: GNDocument): Promise<GNValidationResult[]> {
     const issues: string[] = [];
     if (hasBullets(text)) issues.push('contains bullet points');
     if (hasAndJoinedLaws(text)) issues.push('laws joined by "and" on the same line');
+    if (hasSemicolonJoinedLaws(text)) issues.push('laws joined by ";" on the same line');
     if (hasPeriodJoinedLaws(text)) issues.push('multiple citations joined on one line');
     if (US_STATES.has(doc.jurisdiction) && hasSectionSpelledOut(text)) issues.push('"Section"/"Sections" should be § / §§ for US statutes');
 
@@ -336,16 +435,48 @@ export async function ruleB2(doc: GNDocument): Promise<GNValidationResult[]> {
 
 // ── B3 ────────────────────────────────────────────────────────────────────────
 
-const LIST_OF_LAWS_QUESTIONS = new Set(['1.1.1']);
+// Set confirmed against the FINAL Direct Marketing template section 1.1
+// ("Law and regulations"), which contains exactly three structurally
+// identical list-the-applicable-laws questions — one per channel:
+//   1.1.1 — laws applying to e-marketing
+//   1.1.2 — laws applying to telemarketing
+//   1.1.3 — laws applying to sms/mms marketing
+// All three have Citation pre-filled "Not applicable." and expect any
+// applicable laws to live in the Response. Section 1.2 ("Supervisory
+// authority") is a DIFFERENT shape that does take real citations, so
+// the set MUST NOT extend past 1.1.3. The pre-fix build only had
+// '1.1.1' in this set; the analyst-reported 1.1.2 / 1.1.3 misses were
+// structural — those question numbers literally could not flag.
+const LIST_OF_LAWS_QUESTIONS = new Set(['1.1.1', '1.1.2', '1.1.3']);
+
+// Near-canonical "Not applicable" matcher. A cell that contains the
+// canonical placeholder modulo case and trailing punctuation (e.g.
+// "Not applicable" missing the period, or "NOT APPLICABLE.") is the
+// correct semantic answer for a list-of-laws question — the only issue
+// is punctuation, which is D1/D3's job, not B3's. Without this
+// normalisation B3 over-fires on these near-canonical cells with the
+// wrong message ("laws belong in the Response") when there are no
+// laws in the cell at all, only a punctuation typo. Before the content-
+// first guard this was masked by D1 silently fixing the period; the
+// guard exposes the over-fire, so the fix is to make B3 not fire here.
+function normalizesToNotApplicable(text: string): boolean {
+  const normalized = text.trim().toLowerCase().replace(/[.,;:!?]+$/, '');
+  return normalized === 'not applicable';
+}
 
 // B3 — No Citations in List-of-Laws Questions
 export async function ruleB3(doc: GNDocument): Promise<GNValidationResult[]> {
   const results: GNValidationResult[] = [];
 
   for (const question of doc.questions) {
-    if (!LIST_OF_LAWS_QUESTIONS.has(question.number)) continue;
+    // Key on internalNumber — `question.number` is the analyst-facing
+    // identifier which post-Req1 is a text-fallback string for many docs.
+    if (!LIST_OF_LAWS_QUESTIONS.has(question.internalNumber)) continue;
     if (!question.citation) continue;
-    if (question.citation.text.trim() === 'Not applicable.') continue;
+    // Skip when the cell is already the canonical placeholder or a
+    // near-canonical variant (case/punctuation tolerant — see
+    // normalizesToNotApplicable).
+    if (normalizesToNotApplicable(question.citation.text)) continue;
 
     results.push({
       ruleId: 'B3',
@@ -364,4 +495,60 @@ export async function ruleB3(doc: GNDocument): Promise<GNValidationResult[]> {
 export async function ruleB4(_doc: GNDocument): Promise<GNValidationResult[]> {
   // TODO Phase 1E (AI-evaluated)
   return [];
+}
+
+// ── B5 — Valid Citation Content ──────────────────────────────────────────────
+//
+// Reads the canonical INVALID placeholder list from
+// `app/gn-validator/spec/dimension-spec.xlsx` (row B5, Fail Criteria
+// column) via `loadCitationContentSpec`. Whole-cell text match against
+// the INVALID set, case-insensitive, trailing-punctuation tolerant
+// (full stop, comma, semicolon, colon, exclamation, question mark).
+//
+// Pass-one is deterministic-only: matches against the explicit INVALID
+// list. The heuristic short-non-citation-shaped branch was deliberately
+// dropped because bare acronyms (GLBA, HIPAA) and short statute refs
+// (§42-525, C-741/21) can be both short and not match a citation-shape
+// detector — false-negative-safe.
+//
+// One finding per cell, not per line. For multi-row consolidated
+// citations the whole consolidated text is matched (no per-line scan).
+import { loadCitationContentSpec } from '../spec/load-spec';
+
+const B5_SPEC = loadCitationContentSpec();
+const B5_INVALID_NORMALIZED = new Set(
+  B5_SPEC.invalidPlaceholders.map(p => p.toLowerCase()),
+);
+
+function normalizeForB5Match(text: string): string {
+  const trimmed = text.trim().toLowerCase();
+  // Strip trailing punctuation, but preserve the original when stripping
+  // would reduce the value to the empty string. This handles INVALID
+  // entries like "." and "—" — stripping their trailing punctuation
+  // would collapse them to "" which would either fail to match or
+  // (worse) silently match empty cells. Empty cells are filtered earlier
+  // by `!text.trim()` so the symmetric preserve is safe.
+  const stripped = trimmed.replace(/[.,;:!?]+$/, '');
+  return stripped || trimmed;
+}
+
+export async function ruleB5(doc: GNDocument): Promise<GNValidationResult[]> {
+  const results: GNValidationResult[] = [];
+  for (const question of doc.questions) {
+    if (!question.citation) continue;
+    const text = question.citation.text;
+    if (!text.trim()) continue;  // A3 handles blank
+    const normalized = normalizeForB5Match(text);
+    if (B5_INVALID_NORMALIZED.has(normalized)) {
+      results.push({
+        ruleId: 'B5',
+        questionNumber: question.number,
+        field: 'citation',
+        severity: 'error',
+        message: `Citation content "${text.trim()}" is not a valid citation or an allowed placeholder. Use an actual citation or "Not applicable."`,
+        fixType: 'flag',
+      });
+    }
+  }
+  return results;
 }

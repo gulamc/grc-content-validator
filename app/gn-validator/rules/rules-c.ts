@@ -64,9 +64,11 @@ export async function ruleC2(doc: GNDocument): Promise<GNValidationResult[]> {
 
   for (const question of doc.questions) {
     if (!question.persona) continue;
-    // Match on section OR full question number (brief includes both e.g. "7.1.1")
+    // Match on section OR full question number (brief includes both e.g. "7.1.1").
+    // Use internalNumber here — `question.number` is the analyst-facing
+    // identifier which post-Req1 is a text-fallback string for many docs.
     const matchesList = requiredSections.includes(question.section) ||
-                        requiredSections.includes(question.number);
+                        requiredSections.includes(question.internalNumber);
     if (!matchesList) continue;
 
     const text = question.persona.text.trim();
