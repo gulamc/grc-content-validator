@@ -33,14 +33,16 @@ const root = '/Users/user/grc-content-validator/grc-content-validator';
 const { parseGNDocument } = await import(`${root}/app/gn-validator/parser.ts`);
 const { generateDocx } = await import(`${root}/app/gn-validator/output/index.ts`);
 const { RULE_FNS } = await import(`${root}/app/gn-validator/rules/index.ts`);
+const { applyContentValidityGuard } = await import(`${root}/app/gn-validator/rules/content-validity-guard.ts`);
 
 const buf = readFileSync(`${root}/samples/Philippines - Direct Marketing .docx`);
 const doc = await parseGNDocument(buf, 'marketing', 'Philippines', 'p.docx');
-const results = [];
+const rawResults = [];
 for (const [, fn] of Object.entries(RULE_FNS)) {
-  try { results.push(...(await fn(doc))); } catch {}
+  try { rawResults.push(...(await fn(doc))); } catch {}
 }
-// No multi-row downgrade — mirrors the validate route after B1 Path A.
+// Mirror the validate route: apply the content-first guard before generating.
+const results = applyContentValidityGuard(rawResults);
 const outBuf = await generateDocx(doc, results);
 
 // ── Open output zip and parse XML directly (no GN parser involvement) ────────

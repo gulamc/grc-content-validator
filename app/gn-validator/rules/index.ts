@@ -36,6 +36,7 @@ export const RULE_FNS: Record<string, RuleFn> = {
   B2: rulesB.ruleB2,
   B3: rulesB.ruleB3,
   B4: rulesB.ruleB4,
+  B5: rulesB.ruleB5,
 
   C1: rulesC.ruleC1,
   C2: rulesC.ruleC2,

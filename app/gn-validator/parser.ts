@@ -168,7 +168,25 @@ export async function parseGNDocument(
       }
 
       sectionCounts[currentSection] = (sectionCounts[currentSection] ?? 0) + 1;
-      const questionNumber = `${currentSection}.${sectionCounts[currentSection]}`;
+      const computedNumber = `${currentSection}.${sectionCounts[currentSection]}`;
+
+      // Findability gate (Requirement 1): the displayed identifier must be
+      // Ctrl-F'able in the source. Connecticut/Belgium-class docs conventionally
+      // include a literal "X.Y.Z" prefix at the start of each question paragraph,
+      // and Connecticut's audit showed 145/145 LITERAL — the computed counter
+      // matched the literal prefix every time. For docs where this convention
+      // breaks (counter drift, deeper hierarchy, no literal prefix at all), we
+      // fall back to the question text instead of showing an unfindable number.
+      const literalPrefixMatch = pendingQuestionText.match(/^(\d+(?:\.\d+){1,4})\.?\s+/);
+      let number: string;
+      let numberProvenance: 'literal' | 'text-fallback';
+      if (literalPrefixMatch && literalPrefixMatch[1] === computedNumber) {
+        number = computedNumber;
+        numberProvenance = 'literal';
+      } else {
+        number = `${currentSection} / ${pendingQuestionText}`;
+        numberProvenance = 'text-fallback';
+      }
 
       let response: GNCell | undefined;
       let citation: GNCell | undefined;
@@ -187,12 +205,18 @@ export async function parseGNDocument(
       }
 
       questions.push({
-        number: questionNumber,
+        number,
         section: currentSection,
         questionText: pendingQuestionText,
         response,
         citation,
         persona,
+        numberProvenance,
+        // `internalNumber` is the stable computed identifier — what was
+        // displayed pre-Req1 — kept so rules with hardcoded exclusion
+        // lists (B3, C2, E1, G3) can key on it instead of on the
+        // user-facing `number`. See types.ts for the full rationale.
+        internalNumber: computedNumber,
       });
 
       pendingQuestionText = '';
