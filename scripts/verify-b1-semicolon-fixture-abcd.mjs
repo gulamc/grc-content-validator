@@ -1,30 +1,31 @@
 /**
- * B1 a/b/c/d demonstration — "and"-joined two-law citation.
+ * B1 (Citation Formatting) — semicolon-joined multi-instrument case.
  *
- * REBUILD NOTE: this fixture previously placed its POSITIVE/NEGATIVE cells
- * on Q1.1.2 / Q1.1.3 of the Germany Direct Marketing doc. The B3 set
- * expansion to {1.1.1, 1.1.2, 1.1.3} (analyst-confirmed) means those
- * cells are now owned by B3 — the content-validity guard correctly
- * suppresses B1's auto-fix when laws live in the citation field of a
- * list-of-laws question. The B1 split logic is unchanged; the
- * demonstration just needs cells outside B3's set. Rebuilt as a CLEAN
- * single-rule fixture with the test cells at Q1.2.2 / Q1.2.3 (the
- * "Supervisory authority" section — accepts real citations, B3 doesn't
- * fire). Paragraph-count assertion added to match the B1 semicolon
- * fixture's rigor: exactly N <w:p> direct children survive Accept All,
- * each paragraph's after-accept text exactly equals the expected line.
+ * Permanent regression fixture for the analyst-reported NEW-template
+ * Direct Marketing finding: a real Portuguese GN citation that joins
+ * THREE different instruments with ";" rather than "and"/period. The
+ * old B1 returned ZERO findings on this string — exactly the "B1 fires
+ * 0 times on the 5 sample docs, looked correct, but is blind to real
+ * joins" gap. This fixture locks the new semicolon-split + bare-
+ * instrument tail behaviour down so it cannot silently regress.
  *
- *   POSITIVE Q1.2.2 citation:
- *     "Articles 2-5 of the GDPR and Articles 5, 7, and 9 of the National Law"
- *     B1 must split into 2 lines:
- *       "Articles 2-5 of the GDPR"
- *       "Articles 5, 7, and 9 of the National Law"
+ * Clean fixture (Connecticut Overview, every other cell scrubbed to
+ * "Not applicable.") so ONLY B1 fires.
  *
- *   NEGATIVE Q1.2.3 citation:
- *     "Sections 12 and 13 of the Data Privacy Act"
+ *   POSITIVE Q1.2.2 citation = EXACT analyst string:
+ *     "Article 55(1) GDPR; Article 3(1) of Law No. 58/2019;
+ *      Articles 13-D and 13-G of Law No. 41/2004"
+ *     B1 must split into THREE lines, with bare "GDPR" normalised to
+ *     "of GDPR":
+ *       "Article 55(1) of GDPR;"
+ *       "Article 3(1) of Law No. 58/2019;"
+ *       "Articles 13-D and 13-G of Law No. 41/2004"
+ *
+ *   NEGATIVE Q1.2.3 citation = same-instrument semicolon:
+ *     "Article 5 of the GDPR; Article 7 of the GDPR"
  *     B1 must NOT split — both sides reference the same instrument.
- *     (US_STATES guard for the "Section" → § substitution doesn't fire
- *     either because Germany is not a US state.)
+ *     This is the near-miss that proves shouldSplit's same-instrument
+ *     gate still holds under the new ";" splitter.
  */
 import { readFileSync, writeFileSync } from 'fs';
 import JSZip from 'jszip';
@@ -40,25 +41,26 @@ const { applyContentValidityGuard } = await import(`${root}/app/gn-validator/rul
 const { generateDocx } = await import(`${root}/app/gn-validator/output/index.ts`);
 const { buildCellMap, buildCellIdIndex } = await import(`${root}/app/gn-validator/output/cell-map.ts`);
 
-const TEMPLATE = `${root}/samples/Germany Direct Marketing 2026 edited.docx`;
-const FIXTURE_INPUT  = `${root}/samples/fixtures/fixture-b1-realtest-input.docx`;
-const FIXTURE_OUTPUT = `${root}/samples/fixtures/fixture-b1-realtest-output.docx`;
+const TEMPLATE = `${root}/samples/Connecticut - Privacy Overview Guidance Note (2) (1).docx`;
+const FIXTURE_INPUT  = `${root}/samples/fixtures/fixture-b1-semicolon-realtest-input.docx`;
+const FIXTURE_OUTPUT = `${root}/samples/fixtures/fixture-b1-semicolon-realtest-output.docx`;
 
-const POSITIVE_CITATION = 'Articles 2-5 of the GDPR and Articles 5, 7, and 9 of the National Law';
+const POSITIVE_CITATION = 'Article 55(1) GDPR; Article 3(1) of Law No. 58/2019; Articles 13-D and 13-G of Law No. 41/2004';
 const POSITIVE_EXPECTED_LINES = [
-  'Articles 2-5 of the GDPR',
-  'Articles 5, 7, and 9 of the National Law',
+  'Article 55(1) of GDPR;',
+  'Article 3(1) of Law No. 58/2019;',
+  'Articles 13-D and 13-G of Law No. 41/2004',
 ];
-const NEGATIVE_CITATION = 'Sections 12 and 13 of the Data Privacy Act';
+const NEGATIVE_CITATION = 'Article 5 of the GDPR; Article 7 of the GDPR';
 
 console.log('═══════════════════════════════════════════════════════════════');
-console.log(' B1 — "and"-join single-rule fixture a/b/c/d');
+console.log(' B1 — semicolon multi-instrument single-rule fixture a/b/c/d');
 console.log('═══════════════════════════════════════════════════════════════\n');
 
 const buildInfo = await buildCleanFixture({
   template: TEMPLATE,
-  parseType: 'marketing',
-  jurisdiction: 'Germany',
+  parseType: 'overview',
+  jurisdiction: 'Connecticut',
   output: FIXTURE_INPUT,
   targetCells: [
     { internalNumber: '1.2.2', field: 'citation', text: POSITIVE_CITATION },
@@ -69,7 +71,7 @@ console.log(`scrubbed ${buildInfo.cellsScrubbed} cells, ${buildInfo.cellsTarget}
 console.log(`wrote ${FIXTURE_INPUT}\n`);
 
 const fixtureBuf = readFileSync(FIXTURE_INPUT);
-const doc = await parseGNDocument(fixtureBuf, 'marketing', 'Germany', 'b1-fixture.docx');
+const doc = await parseGNDocument(fixtureBuf, 'overview', 'Connecticut', 'b1-semi-fixture.docx');
 const rawResults = [];
 for (const [, fn] of Object.entries(RULE_FNS)) {
   try { rawResults.push(...(await fn(doc))); } catch {}
@@ -86,22 +88,16 @@ function check(label, ok) { console.log(`  ${ok ? '✅' : '❌'} ${label}`); ret
 
 // ── (a) LOGIC ───────────────────────────────────────────────────────────────
 console.log('── (a) LOGIC ───────────────────────────────────────────────────────');
-console.log(`  Total findings (whole doc): ${results.length}`);
+console.log(`  Total findings: ${results.length}`);
 const allRuleIds = [...new Set(results.map(r => r.ruleId))].sort();
-console.log(`  Rule IDs firing (whole doc): [${allRuleIds.join(', ')}]`);
-// Marketing template has structural cells the scrub can't reach (parser
-// returns null for some questions' citation cell), so A1 / H7 may fire
-// elsewhere unrelated to B1. Strict gate is on the target cells.
-const targetQ = new Set([qPos.number, qNeg.number]);
-const targetRuleIds = [...new Set(results.filter(r => targetQ.has(r.questionNumber)).map(r => r.ruleId))].sort();
-console.log(`  Rule IDs firing on the 2 target cells: [${targetRuleIds.join(', ')}]`);
-aPass = check('Only B1 fires on the 2 target cells (B1-only locally)',
-  targetRuleIds.length === 1 && targetRuleIds[0] === 'B1') && aPass;
+console.log(`  Rule IDs firing: [${allRuleIds.join(', ')}]`);
+aPass = check('Total findings are B1-only (no other-rule noise)',
+  allRuleIds.length === 1 && allRuleIds[0] === 'B1') && aPass;
 const posB1 = results.find(r => r.ruleId === 'B1' && r.questionNumber === qPos.number);
 const negB1 = results.find(r => r.ruleId === 'B1' && r.questionNumber === qNeg.number);
-aPass = check('B1 fires on positive ("and"-joined different instruments)',
+aPass = check('B1 fires on positive (semicolon-joined different instruments)',
   !!posB1 && posB1.fixType === 'auto') && aPass;
-aPass = check('B1 does NOT fire on negative (same instrument)', !negB1) && aPass;
+aPass = check('B1 does NOT fire on negative (same instrument, semicolon)', !negB1) && aPass;
 if (posB1) {
   const lines = (posB1.correctedText ?? '').split('\n');
   console.log(`  correctedText lines (${lines.length}):`);
@@ -145,6 +141,20 @@ function getDescendants(node, ln) {
   walk(node);
   return out;
 }
+function cellCommittedText(tc) {
+  let text = '';
+  function walk(n) {
+    for (let i = 0; i < n.childNodes.length; i++) {
+      const c = n.childNodes[i];
+      if (!c.localName) continue;
+      if (c.localName === 'del') continue;
+      if (c.localName === 't') text += c.textContent ?? '';
+      else if (c.childNodes?.length) walk(c);
+    }
+  }
+  walk(tc);
+  return text;
+}
 function cellInsCount(tc) {
   let n = 0;
   for (const ins of getDescendants(tc, 'ins')) {
@@ -167,7 +177,6 @@ function cellComments(tc) {
   }
   return out;
 }
-
 const posTc = outCellMap.get(outCellIdIndex.get(`${qPos.number}:citation`))?.tcNode;
 const negTc = outCellMap.get(outCellIdIndex.get(`${qNeg.number}:citation`))?.tcNode;
 
@@ -186,10 +195,16 @@ bPass = check('negative cell has 0 GN Validator tracked changes', negIns === 0 &
 bPass = check('negative cell has 0 GN Validator comments', negCmts.length === 0) && bPass;
 
 if (posTc) {
-  // PARAGRAPH-COUNT GATE — same rigor as the B1 semicolon fixture.
-  // Asserts the split is paragraph-realised, not substring-only, AND
-  // that after Accept All each paragraph's text exactly equals the
-  // expected canonical line.
+  // (b.i) PARAGRAPH-COUNT GATE — the structural assertion.
+  // Counting <w:p> direct children of the <w:tc> proves the split is
+  // realised as separate paragraphs in OOXML, not a single paragraph
+  // whose text happens to contain ";" + the right substrings. After
+  // Accept All in Word each <w:p> renders as a separate line.
+  //
+  // A paragraph "survives Accept All" iff its paragraph-end mark
+  // (w:pPr → w:rPr → w:del) is NOT del-marked by GN Validator. (A del
+  // mark on the paragraph end would merge it into the next.) We assert
+  // both the structural count AND the survives-Accept count are 3.
   function pMarkStatus(p) {
     for (let i = 0; i < p.childNodes.length; i++) {
       const c = p.childNodes[i];
@@ -236,10 +251,10 @@ if (posTc) {
   const totalP = paragraphs.length;
   const survivingP = paragraphs.filter(p => p.survives).length;
   console.log(`  positive cell: ${totalP} <w:p> total, ${survivingP} surviving after Accept All`);
-  bPass = check(`positive cell has exactly 2 <w:p> direct children (split paragraph-realised)`,
-    totalP === 2) && bPass;
-  bPass = check(`positive cell has exactly 2 paragraphs surviving after Accept All`,
-    survivingP === 2) && bPass;
+  bPass = check(`positive cell has exactly 3 <w:p> direct children (split is paragraph-realised, not substring-only)`,
+    totalP === 3) && bPass;
+  bPass = check(`positive cell has exactly 3 paragraphs surviving after Accept All`,
+    survivingP === 3) && bPass;
   const survivingTexts = paragraphs.filter(p => p.survives).map(p => p.text);
   for (let i = 0; i < POSITIVE_EXPECTED_LINES.length; i++) {
     bPass = check(`paragraph #${i + 1} after-accept text EXACTLY equals ${JSON.stringify(POSITIVE_EXPECTED_LINES[i])}`,

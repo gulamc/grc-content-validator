@@ -134,10 +134,44 @@ const H5_PLAIN_WORDS = new Set([
   'AND', 'OR', 'FOR', 'THE', 'THIS', 'THAT',
 ]);
 
-// Match a parenthetical containing only an all-caps abbreviation (3+ letters).
-const H5_INTRO_RE = /\(([A-Z]{3,}(?:-[A-Z]+)?)\)/g;
+// Match a parenthetical containing an all-caps abbreviation (3+ letters),
+// optionally wrapped in quote chars (straight, smart, single, double) and
+// optionally preceded by "the ". The analyst-reported INDECOPI case was
+//   "...Intellectual Property ("INDECOPI"). INDECOPI is responsible…"
+// — the abbreviation IS spelled out, but the inline quote marks broke the
+// previous pattern `/\(([A-Z]{3,})\)/`, so first-use was never recorded
+// and the second mention got flagged. This pattern only LOOSENS what
+// counts as a definition; it cannot cause any new flag because flags
+// only fire when no intro is found.
+const H5_INTRO_RE =
+  /\(\s*["'“”‘’]?(?:the\s+)?([A-Z]{3,}(?:-[A-Z]+)?)["'“”‘’]?\s*\)/g;
 // Match a standalone all-caps abbreviation (3+ letters — avoids 2-letter state codes).
 const H5_ABBR_RE = /\b([A-Z]{3,}(?:-[A-Z]+)?)\b/g;
+
+// Walk text outward from a standalone-abbreviation match to determine
+// whether it is itself sitting inside an intro form — i.e. the same
+// shape H5_INTRO_RE matches. Mirrors that regex character-by-character
+// so the two checks cannot disagree.
+const H5_QUOTE_RE = /["'“”‘’]/;
+function isAtIntroForm(text: string, abbrIdx: number, abbrLen: number): boolean {
+  let i = abbrIdx - 1;
+  if (i >= 0 && H5_QUOTE_RE.test(text[i])) i--;
+  while (i >= 0 && /\s/.test(text[i])) i--;
+  // Optional "the" immediately before
+  if (i >= 3) {
+    const maybeThe = text.slice(i - 2, i + 1);
+    if (/^the$/i.test(maybeThe) && /\s/.test(text[i - 3] ?? '')) {
+      i -= 3;
+      while (i >= 0 && /\s/.test(text[i])) i--;
+    }
+  }
+  if (i < 0 || text[i] !== '(') return false;
+
+  let j = abbrIdx + abbrLen;
+  if (j < text.length && H5_QUOTE_RE.test(text[j])) j++;
+  while (j < text.length && /\s/.test(text[j])) j++;
+  return text[j] === ')';
+}
 
 export async function ruleH5(doc: GNDocument): Promise<GNValidationResult[]> {
   type CellRef = { index: number; q: (typeof doc.questions)[0]; field: 'response' | 'citation' };
@@ -186,10 +220,12 @@ export async function ruleH5(doc: GNDocument): Promise<GNValidationResult[]> {
       if (/^[IVX]+$/.test(abbr)) continue;
       if (alreadyFlagged.has(abbr)) continue;
 
-      // Skip if this match is in intro form: preceded by "(" and followed by ")"
-      const before = m.index! > 0 ? text[m.index! - 1] : '';
-      const after = text[m.index! + abbr.length] ?? '';
-      if (before === '(' && after === ')') continue;
+      // Skip if this match is itself sitting inside an intro form.
+      // `isAtIntroForm` mirrors H5_INTRO_RE so the standalone scan does
+      // not flag the very token that the intro pass just registered
+      // (matters when intro and first standalone use are in the same cell,
+      // as in '("INDECOPI"). INDECOPI is responsible…').
+      if (isAtIntroForm(text, m.index!, abbr.length)) continue;
 
       const introIndex = firstIntroIndex.get(abbr) ?? Infinity;
       if (index < introIndex) {

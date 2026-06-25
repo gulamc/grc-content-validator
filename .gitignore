@@ -31,6 +31,9 @@ scripts/*
 !scripts/verify-e2-fixture-abcd.mjs
 !scripts/verify-f1-predicate.mjs
 !scripts/verify-f1-fixture-abcd.mjs
+!scripts/verify-b1-semicolon-fixture-abcd.mjs
+!scripts/verify-b3-fixture-abcd.mjs
+!scripts/verify-h5-fixture-abcd.mjs
 !scripts/lib-clean-fixture.mjs
 !scripts/parse-rqf-template.mjs
 

@@ -1,20 +1,31 @@
 /**
  * B5 + generalized content-first guard a/b/c/d demonstration.
  *
- * Three-cell fixture (samples/fixtures/fixture-b5-realtest-input.docx):
+ * Three-cell fixture:
  *
- *   Q1.1.1 — B3+B1 collision (B1 must be SUPPRESSED by guard)
- *   Q1.1.2 — B5+D3 collision (D3 must be SUPPRESSED by guard)
- *   Q1.1.3 — negative control (D3 must FIRE — guard not over-broad)
+ *   B3+B1 cell  — B3 fires (laws-in-citation on list-of-laws question);
+ *                 B1 SUPPRESSED by guard.
+ *   B5+D3 cell  — B5 fires (invalid placeholder "None.");
+ *                 D3 SUPPRESSED by guard (don't strip period on invalid).
+ *   Negative    — D3 alone fires (real citation, trailing period to strip);
+ *                 no content-validity rule fires.
  *
- * All three cells verified end-to-end: rule output, output docx tracked
- * changes / comments, display findings payload, and display↔output match.
- * Output saved to samples/fixtures/fixture-b5-realtest-output.docx for
- * visual confirmation in Word.
+ * REBUILD NOTE: previously this fixture put the B5+D3 cell on Q1.1.2 and
+ * the negative cell on Q1.1.3 of the Germany Direct Marketing doc. The
+ * B3 set expansion to {1.1.1, 1.1.2, 1.1.3} (analyst-confirmed) now also
+ * fires B3 on those cells, which:
+ *   - is harmless for the B5+D3 cell (B5 still fires, D3 still suppressed)
+ *   - BREAKS the negative cell (B3 now fires, D3 suppressed — exactly the
+ *     suppressor pattern we don't want as a "guard not over-broad" test)
+ * Rebuilt as a CLEAN fixture with the B5+D3 cell at Q1.2.2 and the
+ * negative cell at Q1.2.3 — outside B3's set, so only the intended
+ * collisions occur. The B3+B1 cell stays at Q1.1.1 (still in B3's set,
+ * which is exactly the cell-shape the B3+B1 collision test needs).
  */
 import { readFileSync, writeFileSync } from 'fs';
 import JSZip from 'jszip';
 import { DOMParser } from '@xmldom/xmldom';
+import { buildCleanFixture } from './lib-clean-fixture.mjs';
 
 const root = '/Users/user/grc-content-validator/grc-content-validator';
 const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
@@ -25,15 +36,15 @@ const { applyContentValidityGuard } = await import(`${root}/app/gn-validator/rul
 const { generateDocx } = await import(`${root}/app/gn-validator/output/index.ts`);
 const { buildCellMap, buildCellIdIndex } = await import(`${root}/app/gn-validator/output/cell-map.ts`);
 
+const TEMPLATE = `${root}/samples/Germany Direct Marketing 2026 edited.docx`;
 const INPUT_PATH  = `${root}/samples/fixtures/fixture-b5-realtest-input.docx`;
 const OUTPUT_PATH = `${root}/samples/fixtures/fixture-b5-realtest-output.docx`;
 
-// Cells identified by their fixture-specific citation content. Lookup by
-// internalNumber means the script is invariant to Req1's display-identifier
-// scheme.
 const B3_B1_CELL_TEXT  = 'Articles 2-5 of the GDPR and Articles 5, 7, and 9 of the National Law';
 const B5_D3_CELL_TEXT  = 'None.';
 const NEGATIVE_CELL_TEXT = '§ 36a-701b of Conn. Gen. Stat.';
+// D3 strips the trailing period, leaving everything before it.
+const NEGATIVE_EXPECTED_AFTER_D3 = '§ 36a-701b of Conn. Gen. Stat';
 
 async function runAllRules(doc) {
   const raw = [];
@@ -78,6 +89,26 @@ function committedText(node) {
   return t;
 }
 
+// ── Build fixture ───────────────────────────────────────────────────────────
+console.log('═══════════════════════════════════════════════════════════════');
+console.log(' B5 + content-first guard a/b/c/d demonstration');
+console.log('═══════════════════════════════════════════════════════════════');
+
+const buildInfo = await buildCleanFixture({
+  template: TEMPLATE,
+  parseType: 'marketing',
+  jurisdiction: 'Germany',
+  output: INPUT_PATH,
+  targetCells: [
+    { internalNumber: '1.1.1', field: 'citation', text: B3_B1_CELL_TEXT },
+    { internalNumber: '1.2.2', field: 'citation', text: B5_D3_CELL_TEXT },
+    { internalNumber: '1.2.3', field: 'citation', text: NEGATIVE_CELL_TEXT },
+  ],
+});
+console.log(`scrubbed ${buildInfo.cellsScrubbed} cells, ${buildInfo.cellsTarget} target(s) set`);
+console.log(`Input  : ${INPUT_PATH}`);
+console.log(`Output : ${OUTPUT_PATH}\n`);
+
 // ── Pipeline ────────────────────────────────────────────────────────────────
 const buf = readFileSync(INPUT_PATH);
 const doc = await parseGNDocument(buf, 'marketing', 'Germany', 'fixture-b5-input.docx');
@@ -85,16 +116,14 @@ const results = await runAllRules(doc);
 const outBuf = await generateDocx(doc, results);
 writeFileSync(OUTPUT_PATH, Buffer.from(outBuf));
 
-// Resolve the three target questions dynamically by their fixture cell text.
-const qB3B1     = doc.questions.find(q => q.citation?.text.trim() === B3_B1_CELL_TEXT);
-const qB5D3     = doc.questions.find(q => q.citation?.text.trim() === B5_D3_CELL_TEXT);
-const qNegative = doc.questions.find(q => q.citation?.text.trim() === NEGATIVE_CELL_TEXT);
+const qB3B1     = doc.questions.find(q => q.internalNumber === '1.1.1');
+const qB5D3     = doc.questions.find(q => q.internalNumber === '1.2.2');
+const qNegative = doc.questions.find(q => q.internalNumber === '1.2.3');
 if (!qB3B1 || !qB5D3 || !qNegative) {
   console.log('Could not locate all three fixture cells.');
   process.exit(1);
 }
 
-// Open the output docx for OOXML inspection.
 const outZip = await JSZip.loadAsync(outBuf);
 const outDocXml = await outZip.file('word/document.xml').async('string');
 const outCommentsXml = await outZip.file('word/comments.xml')?.async('string') ?? '';
@@ -135,12 +164,6 @@ function gnDelCount(tc) {
   return n;
 }
 
-console.log('═══════════════════════════════════════════════════════════════');
-console.log(' B5 + content-first guard a/b/c/d demonstration');
-console.log('═══════════════════════════════════════════════════════════════');
-console.log(`Input  : ${INPUT_PATH}`);
-console.log(`Output : ${OUTPUT_PATH}\n`);
-
 let aPass = true, bPass = true, cPass = true, dPass = true;
 function check(label, ok) {
   console.log(`  ${ok ? '✅' : '❌'} ${label}`);
@@ -156,12 +179,14 @@ const fNeg  = findingsForCell(qNegative);
 console.log(`  B3+B1 cell (Q internalNumber=${qB3B1.internalNumber}) — ${fB3B1.length} finding(s):`);
 for (const f of fB3B1) console.log(`    [${f.ruleId} ${f.fixType}] ${f.message.slice(0, 90)}`);
 aPass = check('  B3 fires on the B3+B1 cell', fB3B1.some(f => f.ruleId === 'B3' && f.fixType === 'flag')) && aPass;
-aPass = check('  B1 SUPPRESSED on the B3+B1 cell (no B1 auto-fix in results)', !fB3B1.some(f => f.ruleId === 'B1' && f.fixType === 'auto')) && aPass;
+aPass = check('  B1 SUPPRESSED on the B3+B1 cell (no B1 auto-fix)', !fB3B1.some(f => f.ruleId === 'B1' && f.fixType === 'auto')) && aPass;
 
 console.log(`  B5+D3 cell (Q internalNumber=${qB5D3.internalNumber}) — ${fB5D3.length} finding(s):`);
 for (const f of fB5D3) console.log(`    [${f.ruleId} ${f.fixType}] ${f.message.slice(0, 90)}`);
 aPass = check('  B5 fires on the B5+D3 cell', fB5D3.some(f => f.ruleId === 'B5' && f.fixType === 'flag')) && aPass;
-aPass = check('  D3 SUPPRESSED on the B5+D3 cell (no D3 auto-fix in results)', !fB5D3.some(f => f.ruleId === 'D3' && f.fixType === 'auto')) && aPass;
+aPass = check('  D3 SUPPRESSED on the B5+D3 cell (no D3 auto-fix)', !fB5D3.some(f => f.ruleId === 'D3' && f.fixType === 'auto')) && aPass;
+aPass = check('  No B3 noise on the B5+D3 cell (it is outside the LIST_OF_LAWS set)',
+  !fB5D3.some(f => f.ruleId === 'B3')) && aPass;
 
 console.log(`  Negative cell (Q internalNumber=${qNegative.internalNumber}) — ${fNeg.length} finding(s):`);
 for (const f of fNeg) console.log(`    [${f.ruleId} ${f.fixType}] ${f.message.slice(0, 90)}`);
@@ -197,6 +222,7 @@ bPass = inspectCell('B3+B1 cell', qB3B1, {
 }) && bPass;
 bPass = inspectCell('B5+D3 cell', qB5D3, {
   'has at least one [B5] comment': ({ comments }) => comments.some(c => c.startsWith('[B5]')),
+  'has NO [B3] comment (cell outside LIST_OF_LAWS set)': ({ comments }) => !comments.some(c => c.startsWith('[B3]')),
   'has ZERO GN tracked changes (D3 suppressed)': ({ ins, del }) => ins === 0 && del === 0,
   'committed text is "None." unchanged': ({ committedParas }) => committedParas.join(' | ') === 'None.',
 }) && bPass;
@@ -204,7 +230,7 @@ bPass = inspectCell('Negative cell', qNegative, {
   'has ZERO [B5] / [B3] comments': ({ comments }) => !comments.some(c => /^\[B[35]\]/.test(c)),
   'has at least one GN tracked change (D3 fires)': ({ ins, del }) => ins + del >= 1,
   'committed text after Accept All has trailing period stripped':
-    ({ committedParas }) => committedParas.join(' | ') === '§ 36a-701b of Conn. Gen. Stat',
+    ({ committedParas }) => committedParas.join(' | ') === NEGATIVE_EXPECTED_AFTER_D3,
 }) && bPass;
 console.log(`  ── (b) verdict: ${bPass ? '✅ PASS' : '❌ FAIL'}\n`);
 
@@ -241,23 +267,20 @@ function cellSummaryFromOutput(q) {
     gnComments: gnCommentsInCell(tc),
   };
 }
-const out111 = cellSummaryFromOutput(qB3B1);
-const out112 = cellSummaryFromOutput(qB5D3);
-const out113 = cellSummaryFromOutput(qNegative);
+const out1 = cellSummaryFromOutput(qB3B1);
+const out2 = cellSummaryFromOutput(qB5D3);
+const out3 = cellSummaryFromOutput(qNegative);
 
-// For B3+B1: display has B3 flag, output has B3 comment, output has 0 tracked
 dPass = check('B3+B1 cell: display B3 count == output [B3] comment count, output has 0 GN tracked',
-  dB3B1.filter(f => f.ruleId === 'B3').length === out111.gnComments.filter(c => c.startsWith('[B3]')).length &&
-  out111.gnIns === 0 && out111.gnDel === 0) && dPass;
-// For B5+D3: display has B5 flag, output has B5 comment, output has 0 tracked
+  dB3B1.filter(f => f.ruleId === 'B3').length === out1.gnComments.filter(c => c.startsWith('[B3]')).length &&
+  out1.gnIns === 0 && out1.gnDel === 0) && dPass;
 dPass = check('B5+D3 cell: display B5 count == output [B5] comment count, output has 0 GN tracked',
-  dB5D3.filter(f => f.ruleId === 'B5').length === out112.gnComments.filter(c => c.startsWith('[B5]')).length &&
-  out112.gnIns === 0 && out112.gnDel === 0) && dPass;
-// For negative: display has D3 auto, output has ≥1 GN tracked change, no B5/B3 comments
+  dB5D3.filter(f => f.ruleId === 'B5').length === out2.gnComments.filter(c => c.startsWith('[B5]')).length &&
+  out2.gnIns === 0 && out2.gnDel === 0) && dPass;
 dPass = check('Negative cell: display has D3 auto-fix, output has ≥1 GN tracked change, no [B5]/[B3] comments',
   dNeg.some(f => f.ruleId === 'D3' && f.fixType === 'auto') &&
-  out113.gnIns + out113.gnDel >= 1 &&
-  !out113.gnComments.some(c => /^\[B[35]\]/.test(c))) && dPass;
+  out3.gnIns + out3.gnDel >= 1 &&
+  !out3.gnComments.some(c => /^\[B[35]\]/.test(c))) && dPass;
 console.log(`  ── (d) verdict: ${dPass ? '✅ PASS' : '❌ FAIL'}\n`);
 
 console.log('═══════════════════════════════════════════════════════════════');

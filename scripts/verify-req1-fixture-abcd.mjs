@@ -1,19 +1,18 @@
 /**
- * Requirement 1 a/b/c/d demonstration on the realistic fixture.
+ * Requirement 1 a/b/c/d demonstration.
  *
  *   (a) LOGIC: parseGNDocument tags every question with `numberProvenance`.
  *       On the heading-driven Germany fixture, both selected questions
  *       have provenance='text-fallback'; their displayed `number` is the
- *       question text (not a resolver-computed "1.1.1"). On Connecticut
+ *       question text (not a resolver-computed "1.X.Y"). On Connecticut
  *       Overview (LITERAL doc, run as a negative control alongside), every
  *       question has provenance='literal' and number unchanged.
  *
  *   (b) OUTPUT DOCX: GN comments emitted for the fixture's findings use
- *       the new text-based identifier in their text body (e.g.
- *       "[B1] 1.1 / Furthermore, local consumer protection law applies…").
- *       The OOXML cell anchors are unchanged at the structural level —
- *       cell IDs from buildCellIdIndex resolve to the same <w:tc> nodes
- *       as before, because anchoring is positional.
+ *       the new text-based identifier in their text body. OOXML cell
+ *       anchors are unchanged at the structural level — cell IDs from
+ *       buildCellIdIndex resolve to the same <w:tc> nodes whether the
+ *       displayed identifier is "1.2.2" or text-fallback.
  *
  *   (c) DISPLAY: findings payload's questionNumber field is the text-
  *       based identifier (or LITERAL prefix on a LITERAL doc), never a
@@ -22,14 +21,22 @@
  *
  *   (d) MATCH: every screen finding's questionNumber resolves through
  *       buildCellIdIndex on the OUTPUT docx to the SAME <w:tc> that
- *       carries the tracked change / comment for that finding. Same
- *       cell, same finding, same fix.
+ *       carries the tracked change / comment for that finding.
+ *
+ * REBUILD NOTE: previously this fixture placed its B1-triggering cell on
+ * Q1.1.2 of the Germany Direct Marketing doc. The B3 set expansion to
+ * {1.1.1, 1.1.2, 1.1.3} (analyst-confirmed) puts that cell under B3's
+ * content-validity umbrella, suppressing B1. The identifier-flow proof
+ * still holds — it just needs B1 to fire on a cell B3 doesn't own.
+ * Rebuilt as a CLEAN single-rule fixture with the B1-triggering cell at
+ * Q1.2.2 (text-fallback provenance, outside B3's set, B1 fires).
  *
  * Saves output docx to samples/fixtures/fixture-req1-realtest-output.docx.
  */
 import { readFileSync, writeFileSync } from 'fs';
 import JSZip from 'jszip';
 import { DOMParser } from '@xmldom/xmldom';
+import { buildCleanFixture } from './lib-clean-fixture.mjs';
 
 const root = '/Users/user/grc-content-validator/grc-content-validator';
 const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
@@ -40,9 +47,13 @@ const { applyContentValidityGuard } = await import(`${root}/app/gn-validator/rul
 const { generateDocx } = await import(`${root}/app/gn-validator/output/index.ts`);
 const { buildCellMap, buildCellIdIndex } = await import(`${root}/app/gn-validator/output/cell-map.ts`);
 
+const TEMPLATE = `${root}/samples/Germany Direct Marketing 2026 edited.docx`;
 const FIXTURE_INPUT  = `${root}/samples/fixtures/fixture-req1-realtest-input.docx`;
 const FIXTURE_OUTPUT = `${root}/samples/fixtures/fixture-req1-realtest-output.docx`;
 const CONNECTICUT_INPUT = `${root}/samples/Connecticut - Privacy Overview Guidance Note (2) (1).docx`;
+
+const POSITIVE_CITATION = 'Articles 2-5 of the GDPR and Articles 5, 7, and 9 of the National Law';
+const NEGATIVE_CITATION = 'Section 12 of the National Law';
 
 async function runAllRules(doc) {
   const raw = [];
@@ -52,14 +63,6 @@ async function runAllRules(doc) {
   return applyContentValidityGuard(raw);
 }
 
-function getChildren(node, ln) {
-  const out = [];
-  for (let i = 0; i < node.childNodes.length; i++) {
-    const c = node.childNodes[i];
-    if (c.localName === ln && c.namespaceURI === W) out.push(c);
-  }
-  return out;
-}
 function getDescendants(node, ln) {
   const out = [];
   function walk(n) {
@@ -73,16 +76,31 @@ function getDescendants(node, ln) {
   return out;
 }
 
-// ── (a) LOGIC — fixture parse + Connecticut negative control ───────────────
+// ── Build fixture ───────────────────────────────────────────────────────────
 console.log('═══════════════════════════════════════════════════════════════');
 console.log(' Requirement 1 a/b/c/d demonstration');
 console.log('═══════════════════════════════════════════════════════════════\n');
+
+const buildInfo = await buildCleanFixture({
+  template: TEMPLATE,
+  parseType: 'marketing',
+  jurisdiction: 'Germany',
+  output: FIXTURE_INPUT,
+  targetCells: [
+    { internalNumber: '1.2.2', field: 'citation', text: POSITIVE_CITATION },
+    { internalNumber: '1.2.3', field: 'citation', text: NEGATIVE_CITATION },
+  ],
+});
+console.log(`scrubbed ${buildInfo.cellsScrubbed} cells, ${buildInfo.cellsTarget} target(s) set`);
+console.log(`wrote ${FIXTURE_INPUT}\n`);
+
+// ── (a) LOGIC ───────────────────────────────────────────────────────────────
 console.log('── (a) LOGIC ───────────────────────────────────────────────────────');
 
 const buf = readFileSync(FIXTURE_INPUT);
 const doc = await parseGNDocument(buf, 'marketing', 'Germany', 'fixture-req1-input.docx');
-const positiveQ = doc.questions.find(q => q.citation?.text.trim().startsWith('Articles 2-5 of the GDPR'));
-const negativeQ = doc.questions.find(q => q.citation?.text.trim() === 'Section 12 of the National Law');
+const positiveQ = doc.questions.find(q => q.internalNumber === '1.2.2');
+const negativeQ = doc.questions.find(q => q.internalNumber === '1.2.3');
 
 let aPass = true;
 function check(label, ok, detail = '') {
@@ -91,8 +109,8 @@ function check(label, ok, detail = '') {
   return ok;
 }
 
-check('POSITIVE question found in fixture', !!positiveQ);
-check('NEGATIVE question found in fixture', !!negativeQ);
+check('POSITIVE question found in fixture (internalNumber=1.2.2)', !!positiveQ);
+check('NEGATIVE question found in fixture (internalNumber=1.2.3)', !!negativeQ);
 if (positiveQ) {
   check(
     'POSITIVE numberProvenance is text-fallback',
@@ -100,7 +118,7 @@ if (positiveQ) {
     `got=${positiveQ.numberProvenance}`,
   );
   check(
-    'POSITIVE displayed number IS the question text (or "section / text"), NOT a resolver-computed "1.1.x"',
+    'POSITIVE displayed number IS the question text, NOT a resolver-computed "1.X.Y"',
     !/^\d+\.\d+\.\d+$/.test(positiveQ.number),
     `number starts: ${JSON.stringify(positiveQ.number.slice(0, 80))}…`,
   );
@@ -141,28 +159,25 @@ console.log(`  ── (a) verdict: ${aPass ? '✅ PASS' : '❌ FAIL'}\n`);
 // Req1 is a DISPLAY-PAYLOAD change. The output docx is unchanged-by-design
 // because:
 //   - Comments anchor to <w:tc> by positional cellId resolution (the SAME
-//     cellId resolves whether the displayed identifier is "1.1.2" or text-
-//     fallback "1.1 / Furthermore…"; only the key STRING differs, the
-//     physical cell is the same).
-//   - Comment text does NOT embed questionNumber — it embeds the rule's
-//     message text, which is unaffected by Req1.
+//     cellId resolves whether the displayed identifier is "1.2.2" or text-
+//     fallback "1.2 / …"; only the key STRING differs, the physical cell
+//     is the same).
+//   - Comment text does NOT embed questionNumber.
 //   - Tracked changes sit on the physical cell, again unaffected.
 //
-// So a meaningful (b) check is: "the docx is structurally equivalent to
-// what the pre-Req1 code would have produced." We simulate the pre-Req1
-// state by reverting q.number to q.internalNumber on a clone of the
-// parsed doc, re-running rules + generateDocx, and comparing the output
-// docx's GN ins/del/commentRangeStart/comment counts AND the sorted set
-// of GN comment text. A green (b) here means "Req1 did not accidentally
-// move any anchor or change any comment text"; the meaningful PROOF of
-// Req1 lives in (c) on the DISPLAY payload.
+// (b) check: docx is structurally equivalent to what pre-Req1 code would
+// have produced. Simulate the pre-Req1 state by reverting q.number to
+// q.internalNumber on a clone of the parsed doc, re-running rules +
+// generateDocx, and comparing the output docx's GN ins/del/comment counts
+// AND the sorted set of GN comment text. Green here means "Req1 did not
+// accidentally move any anchor or change any comment text"; the meaningful
+// PROOF of Req1 lives in (c) on the DISPLAY payload.
 console.log('── (b) OUTPUT DOCX — UNCHANGED-BY-DESIGN ───────────────────────────');
 let bPass = true;
 const results = await runAllRules(doc);
 const outBuf = await generateDocx(doc, results);
 writeFileSync(FIXTURE_OUTPUT, Buffer.from(outBuf));
 
-// Build the pre-Req1 equivalent docx.
 const preDoc = { ...doc, questions: doc.questions.map(q => ({ ...q, number: q.internalNumber })) };
 const rawPre = [];
 for (const [, fn] of Object.entries(RULE_FNS)) {
@@ -226,9 +241,6 @@ check(
 if (positiveFinding) {
   console.log(`    questionNumber: ${JSON.stringify(positiveFinding.questionNumber.slice(0, 100))}…`);
 }
-// Verify NO finding carries a stand-alone resolver-style identifier on
-// the fixture (Germany-source docs should have ZERO findings whose
-// questionNumber matches /^\d+\.\d+\.\d+$/).
 const findingsWithResolverIds = findings.filter(f => /^\d+\.\d+\.\d+$/.test(f.questionNumber));
 check(
   'No display finding carries a resolver-style number on the heading-driven fixture',
@@ -283,5 +295,5 @@ console.log(`  (c) display:                ${cPass ? '✅' : '❌'}`);
 console.log(`  (d) display ↔ output match: ${dPass ? '✅' : '❌'}`);
 console.log(`\n  ${overall ? '✅ REQUIREMENT 1 DEMONSTRATED' : '❌ REQUIREMENT 1 NOT DEMONSTRATED'}`);
 console.log(`\n  Output saved at: ${FIXTURE_OUTPUT}`);
-console.log(`  Open in Word to see findings use text-based identifiers, not "Q1.1.1".`);
+console.log(`  Open in Word to see findings use text-based identifiers, not "Q1.X.Y".`);
 if (!overall) process.exit(1);
