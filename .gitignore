@@ -37,6 +37,7 @@ scripts/*
 !scripts/verify-alberta-fixture-abcd.mjs
 !scripts/verify-alberta-numbering-proof.mjs
 !scripts/verify-alberta-parity.mjs
+!scripts/verify-jurisdiction-alberta.mjs
 !scripts/lib-clean-fixture.mjs
 !scripts/compile-spec.mjs
 !scripts/parse-rqf-template.mjs
