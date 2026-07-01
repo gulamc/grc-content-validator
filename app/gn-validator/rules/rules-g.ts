@@ -205,8 +205,66 @@ export async function ruleG2(doc: GNDocument): Promise<GNValidationResult[]> {
 // `question.number` is a text-fallback string for many docs post-Req1).
 const G3_EXCLUDED_INTERNAL_NUMBERS = new Set(['1.2.2']);
 
+/**
+ * Patterns G3 must not flag. Same subtractive pre-redaction approach as G4:
+ * replace protected digits with spaces of EQUAL LENGTH so getParaLineRef
+ * offsets stay stable for the digits we DO still want to flag.
+ *
+ * Discovered from the analyst-uploaded Alberta doc — the first heavily-cited,
+ * footnoted, real legal doc to reach the rule engine. The sample docs
+ * (Connecticut / Belgium / Germany / Philippines) didn't exercise these
+ * citation-dense patterns.
+ *
+ *   1. STATUTE-CHAPTER CODES.  Alberta / other Canadian statute cites of
+ *      shape "P-6.5", "F-25", "A-1.4" (letter-hyphen-digits-dot-digits).
+ *      The trailing digit after "LETTER-N." is part of the chapter code,
+ *      not spellable prose. The scorer's negative lookahead already skips
+ *      digits followed by ".", but the FINAL digit of "P-6.5" is followed
+ *      by whitespace or comma and gets flagged.
+ *
+ *   2. FOOTNOTE / CASE-LIST LEADING MARKERS.  A digit at the START of a
+ *      paragraph, followed by whitespace and an uppercase word, is a
+ *      list marker ("1 Alberta (Information and Privacy OIPC) v...",
+ *      "3 Alberta Teacher's Association v Alberta..."). Not prose.
+ *
+ *   3. "N OR MORE / N OR LESS / N OR FEWER" CONSTRUCTIONS.  Common in
+ *      statutory paraphrasing ("data matching between 2 or more public
+ *      bodies", "5 or more employees"). The number is the enumeration
+ *      threshold, not a prose count.
+ *
+ * A real un-cited digit in prose ("The report identifies 5 categories.")
+ * matches NONE of these patterns and still flags.
+ */
+const G3_STATUTE_CODE_RE = /\b[A-Za-z]-\d+(?:\.\d+)+\b/g;
+const G3_FOOTNOTE_MARKER_RE = /(^|\n)(\d)(?=\s+[A-Z])/g;
+const G3_N_OR_MORE_RE = /\b(\d)(?=\s+or\s+(?:more|less|fewer|other)\b)/gi;
+
+function redactG3Exceptions(text: string): string {
+  let out = text;
+  // Statute chapter codes — blank ALL digits in the match; length preserved.
+  out = out.replace(G3_STATUTE_CODE_RE, m => m.replace(/\d/g, ' '));
+  // Line-leading footnote/case markers — blank just the leading digit
+  // (preserve the preceding newline).
+  out = out.replace(G3_FOOTNOTE_MARKER_RE, (_m, lead, _digit) => lead + ' ');
+  // "N or more" — blank the single leading digit.
+  out = out.replace(G3_N_OR_MORE_RE, ' ');
+  return out;
+}
+
+function redactGNDocumentForG3(doc: GNDocument): GNDocument {
+  return {
+    ...doc,
+    questions: doc.questions.map(q => ({
+      ...q,
+      response: q.response ? { ...q.response, text: redactG3Exceptions(q.response.text) } : undefined,
+      citation: q.citation ? { ...q.citation, text: redactG3Exceptions(q.citation.text) } : undefined,
+      persona:  q.persona  ? { ...q.persona,  text: redactG3Exceptions(q.persona.text)  } : undefined,
+    })),
+  };
+}
+
 export async function ruleG3(doc: GNDocument): Promise<GNValidationResult[]> {
-  const all = await runScorerRule('numbers', 'G3', doc);
+  const all = await runScorerRule('numbers', 'G3', redactGNDocumentForG3(doc));
   // Map excluded internal numbers to their corresponding display numbers,
   // since the scorer-rule wrapper emits findings tagged with `question.number`
   // (the displayed identifier). One internal number can map to one display

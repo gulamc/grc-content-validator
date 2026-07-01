@@ -117,6 +117,10 @@ export async function ruleH4(_doc: GNDocument): Promise<GNValidationResult[]> {
 // DPA: domain-universal for Data Protection Authority; H2 separately guards misuse.
 // LLC: universally understood legal entity suffix.
 // DNA/HIPAA: universally known outside the legal domain; requiring introduction is noise.
+// ISO 4217 currency codes: universal financial abbreviations, appear in
+// fine/penalty amounts across documents. Discovered from the Alberta doc's
+// "CAD 100,000" penalty references; adding the common set now so any doc
+// citing amounts in these currencies doesn't need each one introduced.
 const H5_EXCEPTIONS = new Set([
   'API', 'HTML', 'CCTV', 'SMS', 'EU', 'UK', 'US',
   'URL', 'PDF', 'HTTP', 'HTTPS', 'USB', 'NATO', 'WHO', 'IMF',
@@ -124,6 +128,15 @@ const H5_EXCEPTIONS = new Set([
   'GDPR', 'DPA', 'LLC',
   'DNA', 'HIPAA',
   'FAQ',
+  // GPS: universal technical abbreviation. Same class as CCTV/DNA/HIPAA
+  // already in the list — used in Alberta doc as "GPS tracking device"
+  // and "GPS data", the well-understood technical sense.
+  'GPS',
+  // Currency codes (ISO 4217) — most common. Not a "privacy abbreviation";
+  // never requires spelling out per house style.
+  'CAD', 'USD', 'EUR', 'GBP', 'AUD', 'NZD', 'JPY', 'CHF', 'CNY', 'HKD',
+  'SGD', 'INR', 'BRL', 'MXN', 'ZAR', 'KRW', 'IDR', 'TRY', 'AED', 'SAR',
+  'QAR', 'KWD', 'BHD', 'OMR', 'ILS', 'THB', 'PHP', 'MYR', 'VND',
 ]);
 
 // Common English words that happen to be all-caps in context (emphasis, section labels,
@@ -147,6 +160,34 @@ const H5_INTRO_RE =
   /\(\s*["'“”‘’]?(?:the\s+)?([A-Z]{3,}(?:-[A-Z]+)?)["'“”‘’]?\s*\)/g;
 // Match a standalone all-caps abbreviation (3+ letters — avoids 2-letter state codes).
 const H5_ABBR_RE = /\b([A-Z]{3,}(?:-[A-Z]+)?)\b/g;
+
+/**
+ * Detect whether an abbreviation match is sitting inside a legal-citation
+ * context. H5 must not flag citation shorthand — it's not prose needing
+ * introduction. Two shapes:
+ *
+ *   CASE citation: <YEAR> <ABBREV> <NUMBER>
+ *     "2011 SCC 61", "2018 ABCA 42", "2020 ABKB 315"
+ *
+ *   STATUTE citation: <ABBREV> <YEAR>, c <SUFFIX>
+ *     "RSA 2000, c F-25", "SA 2003, c P-6.5", "SO 1990, c F.31"
+ *
+ * Both shapes were surfaced by the analyst-uploaded Alberta doc. Broader
+ * than Canada — the shapes are common across Commonwealth citation
+ * conventions ("[year] EWCA Civ N", "[year] UKSC N", statute chapter cites
+ * in Australian / NZ / South African statutes). No jurisdiction coupling.
+ */
+function isInCitationContext(text: string, abbrIdx: number, abbrLen: number): boolean {
+  const before = text.slice(Math.max(0, abbrIdx - 8), abbrIdx);
+  const after = text.slice(abbrIdx + abbrLen, abbrIdx + abbrLen + 30);
+  // Case citation: preceded by "[YYYY] " or "YYYY " (a 4-digit year),
+  // followed by whitespace and a digit (the docket / paragraph number).
+  if (/\b\d{4}\]?\s*$/.test(before) && /^\s+\d/.test(after)) return true;
+  // Statute citation: followed by " YYYY, c <suffix>" (comma-separated
+  // year + "c " for "chapter" + a code).
+  if (/^\s+\d{4}\s*,\s*c\s+/i.test(after)) return true;
+  return false;
+}
 
 // Walk text outward from a standalone-abbreviation match to determine
 // whether it is itself sitting inside an intro form — i.e. the same
@@ -226,6 +267,12 @@ export async function ruleH5(doc: GNDocument): Promise<GNValidationResult[]> {
       // (matters when intro and first standalone use are in the same cell,
       // as in '("INDECOPI"). INDECOPI is responsible…').
       if (isAtIntroForm(text, m.index!, abbr.length)) continue;
+
+      // Skip if this match is in a legal-citation context (case or statute
+      // citation). Discovered from the Alberta doc: "2011 SCC 61", "RSA
+      // 2000, c F-25" — the abbreviations are citation shorthand, not
+      // prose abbreviations needing introduction.
+      if (isInCitationContext(text, m.index!, abbr.length)) continue;
 
       const introIndex = firstIntroIndex.get(abbr) ?? Infinity;
       if (index < introIndex) {
