@@ -62,8 +62,8 @@ export async function generateDocx(
     : null;
 
   // ── 2. Build cell map (before any edits — hash-anchored) ──────────────────
-  const { docEl, cellMap } = await buildCellMap(zip, docXmlStr);
-  const cellIdIndex = buildCellIdIndex(doc, cellMap);
+  const { docEl, cellMap, styleNumMap } = await buildCellMap(zip, docXmlStr);
+  const cellIdIndex = buildCellIdIndex(doc, cellMap, styleNumMap);
 
   // ── 3. Revision-ID generator seeded above existing IDs ────────────────────
   const existingIds = collectExistingRevIds(docXmlStr);
@@ -75,7 +75,7 @@ export async function generateDocx(
   const nextId = makeRevIdGen(existingIds);
 
   // ── 4. Fix pipeline: compute corrected text per cell ─────────────────────
-  const changedCells = await runFixPipeline(doc, results, cellMap);
+  const changedCells = await runFixPipeline(doc, results, cellMap, styleNumMap);
 
   // ── 5. Apply diffs to OOXML cells ─────────────────────────────────────────
   // We mutate docEl's nodes in place — same nodes that cellMap references.
