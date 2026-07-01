@@ -79,12 +79,13 @@ export async function runFixPipeline(
   doc: GNDocument,
   results: GNValidationResult[],
   cellMap: Map<string, CellEntry>,
+  styleNumMap?: Map<string, import('../utils/style-numbering').StyleNumbering>,
 ): Promise<Map<string, CellState>> {
   const fixReg = await getFixRegistry();
 
   // Lazily imported to avoid circular reference.
   const { buildCellIdIndex: buildIdx } = await import('./cell-map');
-  const cellIdIndex = buildIdx(doc, cellMap);
+  const cellIdIndex = buildIdx(doc, cellMap, styleNumMap);
 
   // Initialise per-paragraph state from original paragraph texts.
   const state = new Map<string, CellState>();

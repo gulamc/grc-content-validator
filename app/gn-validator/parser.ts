@@ -1,6 +1,7 @@
 import JSZip from 'jszip';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import type { GNType, GNCell, GNRun, GNQuestion, GNDocument } from './types';
+import { loadStyleNumberingMap } from './utils/style-numbering';
 
 const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 
@@ -11,6 +12,11 @@ const SECTION_HEADING_RE = /^(\d+\.\d+)\.?\s/;
 const LABEL_RESPONSE = /^response\s*$/i;
 const LABEL_CITATION = /^citation\s*$/i;
 const LABEL_PERSONA  = /^applicable persona\s*$/i;
+
+// (Style-numbering machinery extracted to utils/style-numbering.ts —
+// also consumed by output/cell-map.ts for the same reason: the output
+// pipeline's preceding-section-heading filter must recognise auto-
+// numbered headings, not just literal-text ones.)
 
 // Expected row counts per GN type.
 export const ROWS_FOR_TYPE: Record<GNType, number> = {
@@ -141,6 +147,29 @@ export async function parseGNDocument(
   if (!bodyElements.length) throw new Error('No <w:body> found in document.xml');
   const body = bodyElements[0];
 
+  // Load the style-numbering map for auto-numbered heading docs (e.g.
+  // Alberta). Empty for docs that use literal-text numbering — those
+  // never reach the style-based branch below, see SECTION_HEADING_RE
+  // path.
+  const styleNumMap = await loadStyleNumberingMap(zip);
+  // Per-numId multi-level counter. counter[0] = ilvl 0, counter[1] = ilvl 1.
+  // Mirrors Word's multi-level counter behaviour: ilvl 0 increments outer
+  // and resets inner; ilvl 1 increments inner. No deeper levels in B.
+  const styleCounters = new Map<string, number[]>();
+  function tickStyleNumber(numId: string, ilvl: number): string {
+    let ctr = styleCounters.get(numId);
+    if (!ctr) { ctr = [0, 0]; styleCounters.set(numId, ctr); }
+    if (ilvl === 0) {
+      ctr[0]++;
+      ctr[1] = 0;
+      return `${ctr[0]}`;
+    }
+    // ilvl === 1 (ilvl > 1 is filtered out of styleNumMap by load step)
+    if (ctr[0] === 0) ctr[0] = 1;  // implicit outer if first sub-heading appears before any top-level
+    ctr[1]++;
+    return `${ctr[0]}.${ctr[1]}`;
+  }
+
   const questions: GNQuestion[] = [];
   let currentSection = '';
   const sectionCounts: Record<string, number> = {};
@@ -159,7 +188,37 @@ export async function parseGNDocument(
         if (sectionCounts[currentSection] === undefined) sectionCounts[currentSection] = 0;
         pendingQuestionText = '';
       } else {
-        pendingQuestionText = text;
+        // Fall through to style-based numbered-heading detection. This
+        // is the path Alberta-class docs take: the section number lives
+        // in the paragraph style's auto-numbering, not in the literal
+        // text. styleNumMap is empty for docs that use literal-text
+        // numbering (Connecticut/Belgium/Germany/Philippines), so they
+        // skip this branch and the paragraph becomes pendingQuestionText
+        // as before — backwards compatible by construction.
+        let styleNumApplied = false;
+        if (styleNumMap.size > 0) {
+          const pPr = getDirectChildren(node, 'pPr')[0];
+          const pStyleEl = pPr ? getDirectChildren(pPr, 'pStyle')[0] : undefined;
+          const pStyleId = pStyleEl?.getAttribute('w:val') ?? null;
+          const styleNum = pStyleId ? styleNumMap.get(pStyleId) : undefined;
+          // Defensive: a paragraph whose text ends with "?" is a question,
+          // not a section name — section names in real GN templates are
+          // noun phrases ("Consent", "Material scope"), they don't end
+          // with "?". The Alberta doc surfaced one Bullet-style question
+          // accidentally re-styled to ArticleL1 by the author; without
+          // this guard, the parser would treat that question as a section
+          // heading and skip its following table. Cheap, narrow, no
+          // false-positive risk on real section headings.
+          if (styleNum && !text.trimEnd().endsWith('?')) {
+            currentSection = tickStyleNumber(styleNum.numId, styleNum.ilvl);
+            if (sectionCounts[currentSection] === undefined) sectionCounts[currentSection] = 0;
+            pendingQuestionText = '';
+            styleNumApplied = true;
+          }
+        }
+        if (!styleNumApplied) {
+          pendingQuestionText = text;
+        }
       }
     } else if (node.localName === 'tbl') {
       if (!currentSection || !pendingQuestionText) {

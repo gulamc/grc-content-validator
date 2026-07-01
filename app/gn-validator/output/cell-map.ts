@@ -2,6 +2,7 @@ import JSZip from 'jszip';
 import { DOMParser } from '@xmldom/xmldom';
 import { W, getChildren, getDescendants } from './xml-utils';
 import type { GNDocument } from '../types';
+import { loadStyleNumberingMap, type StyleNumbering } from '../utils/style-numbering';
 
 export interface CellParagraph {
   pNode: Element;
@@ -45,12 +46,20 @@ function hasTrackedChanges(tc: Element): boolean {
 }
 
 export async function buildCellMap(
-  _zip: JSZip,
+  zip: JSZip,
   docXmlStr: string,
-): Promise<{ docEl: Element; cellMap: Map<string, CellEntry> }> {
+): Promise<{
+  docEl: Element;
+  cellMap: Map<string, CellEntry>;
+  styleNumMap: Map<string, StyleNumbering>;
+}> {
   const domDoc = new DOMParser().parseFromString(docXmlStr, 'application/xml');
   const docEl = domDoc.documentElement;
   const cellMap = new Map<string, CellEntry>();
+  // Style-numbering map for auto-numbered heading docs (Alberta-class).
+  // Empty for literal-numbered docs (Connecticut/Belgium/etc.) so they
+  // take the legacy literal-text path in hasPrecedingSectionHeading.
+  const styleNumMap = await loadStyleNumberingMap(zip);
 
   const tables = getDescendants(docEl, 'tbl');
   tables.forEach((tbl, tableIndex) => {
@@ -80,7 +89,7 @@ export async function buildCellMap(
     });
   });
 
-  return { docEl, cellMap };
+  return { docEl, cellMap, styleNumMap };
 }
 
 const LABEL_RESPONSE = /^response/i;
@@ -104,22 +113,51 @@ function extractParagraphText(p: Element): string {
   return text;
 }
 
+function getDirectChildrenLocal(node: Node, localName: string): Element[] {
+  const out: Element[] = [];
+  for (let i = 0; i < node.childNodes.length; i++) {
+    const c = node.childNodes[i] as Element;
+    if (c.localName === localName) out.push(c);
+  }
+  return out;
+}
+
 /**
- * Returns true if any <w:p> sibling preceding tblNode in its parent matches
- * SECTION_HEADING_RE — i.e., the table is a question table, not a preamble table.
- * Preamble tables (before the first numbered subsection heading) appear in PIA
- * documents as "Laws", "Supervisory authority", etc. and are skipped by the
- * parser's currentSection guard but counted by getDescendants, causing index drift.
- * If tblNode's parent is not <w:body>, returns true (not our concern to skip).
+ * Returns true if any <w:p> sibling preceding tblNode in its parent
+ * looks like a section heading — either by matching SECTION_HEADING_RE
+ * (literal-text numbering, e.g. "1.1. Laws and regulations") OR by
+ * carrying a paragraph style listed in `styleNumMap` (auto-numbered
+ * heading, e.g. Alberta's ArticleL1 / ArticleL2). For auto-numbered
+ * cases the heuristic mirrors parser.ts: a numbered-heading style whose
+ * text ends with "?" is treated as a mis-styled question, not a heading.
+ *
+ * Preamble tables (before the first numbered subsection heading) appear
+ * in PIA documents as "Laws", "Supervisory authority", etc. and are
+ * skipped by the parser's currentSection guard but counted by
+ * getDescendants, causing index drift. If tblNode's parent is not
+ * <w:body>, returns true (not our concern to skip).
  */
-function hasPrecedingSectionHeading(tblNode: Element): boolean {
+function hasPrecedingSectionHeading(
+  tblNode: Element,
+  styleNumMap: Map<string, StyleNumbering>,
+): boolean {
   const parent = tblNode.parentNode as Element | null;
   if (!parent || parent.localName !== 'body') return true;
   for (let i = 0; i < parent.childNodes.length; i++) {
     const sibling = parent.childNodes[i] as Element;
     if (sibling === tblNode) break;
     if (sibling.localName !== 'p') continue;
-    if (SECTION_HEADING_RE.test(extractParagraphText(sibling).trim())) return true;
+    const text = extractParagraphText(sibling).trim();
+    if (SECTION_HEADING_RE.test(text)) return true;
+    // Style-based heading detection — mirrors parser.ts.
+    if (styleNumMap.size > 0) {
+      const pPr = getDirectChildrenLocal(sibling, 'pPr')[0];
+      const pStyleEl = pPr ? getDirectChildrenLocal(pPr, 'pStyle')[0] : undefined;
+      const pStyleId = pStyleEl?.getAttribute('w:val') ?? null;
+      if (pStyleId && styleNumMap.has(pStyleId) && !text.endsWith('?')) {
+        return true;
+      }
+    }
   }
   return false;
 }
@@ -140,6 +178,7 @@ interface QuestionTable {
 export function buildCellIdIndex(
   doc: GNDocument,
   cellMap: Map<string, CellEntry>,
+  styleNumMap: Map<string, StyleNumbering> = new Map(),
 ): Map<string, string> {
   const index = new Map<string, string>();
 
@@ -233,7 +272,7 @@ export function buildCellIdIndex(
 
     if (responseCell || citationCell) {
       const tblNode = cells[0]?.tcNode?.parentNode?.parentNode as Element | undefined;
-      if (tblNode && !hasPrecedingSectionHeading(tblNode)) continue;
+      if (tblNode && !hasPrecedingSectionHeading(tblNode, styleNumMap)) continue;
       questionTables.push({ tableIndex, responseCell, citationCell, personaCell });
     }
   }

@@ -34,6 +34,9 @@ scripts/*
 !scripts/verify-b1-semicolon-fixture-abcd.mjs
 !scripts/verify-b3-fixture-abcd.mjs
 !scripts/verify-h5-fixture-abcd.mjs
+!scripts/verify-alberta-fixture-abcd.mjs
+!scripts/verify-alberta-numbering-proof.mjs
+!scripts/verify-alberta-parity.mjs
 !scripts/lib-clean-fixture.mjs
 !scripts/compile-spec.mjs
 !scripts/parse-rqf-template.mjs
