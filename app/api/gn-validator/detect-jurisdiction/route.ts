@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as mammoth from 'mammoth';
 import { inferJurisdiction } from '@/app/gn-validator/utils/jurisdiction-inference';
-import { ALL_JURISDICTIONS } from '@/app/gn-validator/utils/jurisdictions';
+import { ALL_JURISDICTIONS, UNSUPPORTED_PLACE_NAMES } from '@/app/gn-validator/utils/jurisdictions';
 
 export const runtime = 'nodejs';
 
@@ -44,6 +44,32 @@ function detectFromFilename(fileName: string): string | null {
   return null;
 }
 
+/**
+ * If the filename mentions a place we recognise but do NOT support
+ * (Alberta, Canadian provinces, federal Canada — see
+ * jurisdictions.ts:UNSUPPORTED_PLACE_NAMES), return the matched name so
+ * the caller can short-circuit detection and return `jurisdiction: null`
+ * WITHOUT falling through to content inference.
+ *
+ * Rationale: content inference against a listed jurisdiction whose
+ * markers coincidentally match unsupported-place content is a
+ * confidently-wrong substitution (e.g., Alberta's own "Personal
+ * Information Protection Act (PIPA)" matches South Korea's markers
+ * word-for-word). The filename tells us the correct place; if we can't
+ * validate it, silence is the correct answer.
+ */
+function detectUnsupportedPlaceInFilename(fileName: string): string | null {
+  const stripped = fileName.replace(/\.docx$/i, '');
+  // Longest-first so "British Columbia" wins over any hypothetical
+  // substring match. Whole-word regex prevents "canadagoose.docx"-style
+  // partial matches.
+  const sortedByLength = [...UNSUPPORTED_PLACE_NAMES].sort((a, b) => b.length - a.length);
+  for (const name of sortedByLength) {
+    if (new RegExp(`\\b${escapeRegex(name)}\\b`, 'i').test(stripped)) return name;
+  }
+  return null;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
@@ -55,8 +81,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'File must be a .docx document.' }, { status: 400 });
     }
 
-    // Pass 1: filename-based detection. Filenames are highly reliable when
-    // present (analysts almost always include the jurisdiction).
+    // Pass 1: filename-based detection against ALL_JURISDICTIONS. Filenames
+    // are highly reliable when present (analysts almost always include the
+    // jurisdiction) — this stays authoritative.
     const fromFilename = detectFromFilename(file.name);
     if (fromFilename) {
       return NextResponse.json({
@@ -67,7 +94,25 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Pass 2: content-based detection (existing inferJurisdiction logic).
+    // Pass 1.5: filename-unsupported-place guard. If the filename plainly
+    // names a place we recognise but don't support (Alberta / Canadian
+    // provinces / federal Canada), return null WITHOUT falling through to
+    // content — a content match would be a confidently-wrong substitution
+    // for what the filename actually says. Analyst then picks manually.
+    const unsupportedPlace = detectUnsupportedPlaceInFilename(file.name);
+    if (unsupportedPlace) {
+      return NextResponse.json({
+        success: true,
+        jurisdiction: null,
+        confidence: 'not-detected',
+        source: 'filename-unsupported-region',
+        matchedUnsupportedPlace: unsupportedPlace,
+      });
+    }
+
+    // Pass 2: content-based detection. inferJurisdiction now returns
+    // `jurisdiction: null` for anything short of a qualified-marker match
+    // with no runner-up — "never confidently wrong" is enforced there.
     const buf = Buffer.from(await file.arrayBuffer());
     const { value: text } = await (mammoth as unknown as {
       extractRawText: (opts: { buffer: Buffer }) => Promise<{ value: string }>;
