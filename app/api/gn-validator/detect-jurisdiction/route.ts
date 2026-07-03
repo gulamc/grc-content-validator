@@ -77,7 +77,11 @@ export async function POST(req: NextRequest) {
     if (!file) {
       return NextResponse.json({ success: false, error: 'No file provided.' }, { status: 400 });
     }
-    if (!file.name.endsWith('.docx')) {
+    // Case-insensitive — same reason and pattern as validate/route.ts. This
+    // gate fires on file-select (before Validate is clicked); the client
+    // silently ignores its failure but we still keep the two server gates
+    // in lockstep so behaviour is identical whichever fires first.
+    if (!/\.docx$/i.test(file.name)) {
       return NextResponse.json({ success: false, error: 'File must be a .docx document.' }, { status: 400 });
     }
 

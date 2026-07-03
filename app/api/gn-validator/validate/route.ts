@@ -20,7 +20,12 @@ export async function POST(request: NextRequest) {
     if (!file) {
       return NextResponse.json({ success: false, error: 'No file provided.' }, { status: 400 });
     }
-    if (!file.name.endsWith('.docx')) {
+    // Case-insensitive: Windows commonly saves with uppercase ".DOCX"; per the
+    // HTML spec the file-picker `accept=".docx"` already matches case-
+    // insensitively, but this server gate did not — analysts renamed files
+    // to lowercase to get past the reject. Use the same /\.docx$/i pattern
+    // detect-jurisdiction/route.ts already uses for filename processing.
+    if (!/\.docx$/i.test(file.name)) {
       return NextResponse.json({ success: false, error: 'File must be a .docx document.' }, { status: 400 });
     }
     if (file.size > MAX_FILE_SIZE) {

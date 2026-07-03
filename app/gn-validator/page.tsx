@@ -56,7 +56,10 @@ function downloadDocx(base64: string, fileName: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = fileName.replace(/\.docx$/, '') + ' - GN Validator Output.docx';
+  // Case-insensitive: the input file may be named ".DOCX" (Windows).
+  // Without the /i flag, replace() leaves the uppercase extension intact,
+  // producing an awkward "X.DOCX - GN Validator Output.docx" download name.
+  a.download = fileName.replace(/\.docx$/i, '') + ' - GN Validator Output.docx';
   a.click();
   URL.revokeObjectURL(url);
 }
