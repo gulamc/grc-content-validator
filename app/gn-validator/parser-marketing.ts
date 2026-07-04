@@ -118,6 +118,81 @@ function extractCommittedRuns(node: Node): GNRun[] {
   return runs;
 }
 
+/**
+ * Synthesise a response GNCell from a set of body-level <w:p> elements
+ * (the response paragraphs sitting between a question paragraph and its
+ * citation table in Direct Marketing docs).
+ *
+ * Direct Marketing format: response prose lives in PARAGRAPHS, not in a
+ * table Response cell. Without this synthesis, response-scanning rules
+ * (F1, H5, I2, I3, G-series, D-series) see `q.response === undefined`
+ * and silently return zero — the doc validates clean when it isn't.
+ *
+ *   text  : paragraphs joined with '\n' (mirrors parseCell)
+ *   runs  : per-paragraph runs concatenated; italic flag preserved so
+ *           G9 (Latin italics) sees italic-run info identically to a
+ *           table-cell source
+ *   rawXml: '' — the response has no single <w:tc> to serialise. No
+ *           rule consumes rawXml (grep-confirmed; only a comment mentions
+ *           it). Output pipeline anchors comments/tracked-changes on
+ *           table cells and heading paragraphs via cellId + bodyIndex,
+ *           not on rawXml.
+ */
+function buildResponseFromParagraphs(
+  paras: Array<{ node: Element; bodyIndex: number }>,
+): GNCell | undefined {
+  const texts: string[] = [];
+  const runs: GNRun[] = [];
+  const paragraphBodyIndices: number[] = [];
+  // Cumulative text-offset ranges within the synthesised text — used by
+  // the output pipeline to map a finding's response-text offset back to
+  // the specific paragraph that contains it. Range i covers the text
+  // from paragraphs 0..i inclusive.
+  const paragraphEndOffsets: number[] = [];
+  for (const { node, bodyIndex } of paras) {
+    const t = extractCommittedText(node).trim();
+    if (!t) continue;
+    if (texts.length > 0) {
+      // Synthetic newline between paragraphs — mirrors parseCell's
+      // '\n' join so rules that split on \n (B1, etc.) see the same
+      // paragraph boundary shape.
+      runs.push({ text: '\n', italic: false });
+    }
+    texts.push(t);
+    runs.push(...extractCommittedRuns(node));
+    paragraphBodyIndices.push(bodyIndex);
+    // Cumulative text length after appending this paragraph (with
+    // separators counted). Used to anchor comments to the specific
+    // paragraph a rule matched in, not just the first response para.
+    paragraphEndOffsets.push(texts.join('\n').length);
+  }
+  if (texts.length === 0) return undefined;
+  return {
+    text: texts.join('\n'),
+    rawXml: '',
+    runs,
+    // First response paragraph's body index. Used as the anchor fallback
+    // for response findings when no cellId maps (Direct Marketing docs —
+    // response has no <w:tc>). Anchoring on the first response paragraph
+    // is a huge improvement over the pre-fix anchoring on the question
+    // paragraph, which showed comments on the question text rather than
+    // the response prose the rule actually matched.
+    bodyIndex: paragraphBodyIndices[0],
+    // Per-paragraph anchor data — output/index.ts uses this to anchor a
+    // finding on the SPECIFIC response paragraph containing its match,
+    // not just the first paragraph. Falls back to `bodyIndex` (first)
+    // if paragraphs aren't tracked or a match is out of range.
+    responseParagraphs: paragraphBodyIndices.map((bi, i) => ({
+      bodyIndex: bi,
+      // Start/end offsets within the joined response text. Rules match
+      // against `text`; this lets us find which paragraph the match
+      // landed in by comparing match.index against these ranges.
+      startOffset: i === 0 ? 0 : paragraphEndOffsets[i - 1] + 1, // +1 for '\n'
+      endOffset: paragraphEndOffsets[i],
+    })),
+  };
+}
+
 function parseCell(tc: Element, serializer: XMLSerializer): GNCell {
   const paras = getDirectChildren(tc, 'p');
   const text = paras
@@ -363,6 +438,27 @@ function parseTableDrivenLegacy(
   let currentSection = '';
   const sectionCounts: Record<string, number> = {};
   let pendingQuestionText = '';
+  // Direct Marketing 1-row format: the response lives in one or more
+  // PARAGRAPHS between the question paragraph and the citation table.
+  // The pre-fix legacy walker set `pendingQuestionText = text` on every
+  // non-heading paragraph — so (a) response paragraphs were never
+  // captured (rules got q.response=undefined and silently no-op'd),
+  // and (b) `questionText` ended up being the LAST response paragraph
+  // (identifiers wrong). Fix: distinguish question paragraphs (contain
+  // '?', matching the isQuestionHeading heuristic already used by the
+  // heading-driven branch) from response paragraphs (everything else
+  // between a question and its table). Analyst-reported bug: Turkey
+  // Direct Marketing 2026 returned "0 flagged" on a doc with 25+ real
+  // F1 findings, 2× KVKK / 15× MMS on H5, ~4 short-response I2 cases.
+  let pendingResponseParas: Array<{ node: Element; bodyIndex: number }> = [];
+  // Body-child-index of the question paragraph (the one containing '?').
+  // Used as `headingBodyIndex` on the pushed question so response
+  // findings without a cell anchor fall back to the question paragraph
+  // in output/index.ts's comment-writing loop. Without this, the 80+
+  // response findings on Turkey were being silently dropped from the
+  // output docx (they showed on-screen but not in the analyst's Word
+  // file) — same class of "clean-looking doc that isn't clean" bug.
+  let pendingQuestionBodyIndex: number | undefined;
 
   for (let i = 0; i < body.childNodes.length; i++) {
     const node = body.childNodes[i] as Element;
@@ -376,12 +472,28 @@ function parseTableDrivenLegacy(
         currentSection = sectionMatch[1];
         if (sectionCounts[currentSection] === undefined) sectionCounts[currentSection] = 0;
         pendingQuestionText = '';
-      } else {
+        pendingResponseParas = [];
+        pendingQuestionBodyIndex = undefined;
+      } else if (text.includes('?')) {
+        // New question — capture, reset response accumulator. Uses the
+        // same "contains '?'" heuristic as isQuestionHeading (line ~150);
+        // rationale documented there. Note: we don't require the "all
+        // runs bold" check here because the legacy branch runs on clean-
+        // structural docs where the question/response boundary is
+        // structural, not typographic.
         pendingQuestionText = text;
+        pendingResponseParas = [];
+        pendingQuestionBodyIndex = i;
+      } else {
+        // Non-question, non-heading paragraph between a question and its
+        // citation table = response prose.
+        pendingResponseParas.push({ node, bodyIndex: i });
       }
     } else if (node.localName === 'tbl') {
       if (!currentSection || !pendingQuestionText) {
         pendingQuestionText = '';
+        pendingResponseParas = [];
+        pendingQuestionBodyIndex = undefined;
         continue;
       }
 
@@ -408,18 +520,28 @@ function parseTableDrivenLegacy(
 
       const cit = readCitationTable(node, serializer);
       const citation: GNCell | undefined = cit ? { ...cit.cell, sourceKind: cit.sourceKind } : undefined;
+      const response = buildResponseFromParagraphs(pendingResponseParas);
 
       questions.push({
         number,
         section: currentSection,
         questionText: pendingQuestionText,
+        response,
         citation,
         numberProvenance,
         // Stable computed identifier for internal rule keying. See types.ts.
         internalNumber: computedNumber,
+        // Anchor response findings on the question paragraph in the
+        // output docx (fallback path in output/index.ts). Without this,
+        // response findings (F1, G-series, I2, I3, D1, D2, etc.) fired
+        // in-process but were silently dropped from the analyst's Word
+        // file — the analyst saw them on screen but not in the docx.
+        headingBodyIndex: pendingQuestionBodyIndex,
       });
 
       pendingQuestionText = '';
+      pendingResponseParas = [];
+      pendingQuestionBodyIndex = undefined;
     }
   }
 
@@ -577,6 +699,7 @@ function parseHeadingDriven(
     const questionText = ev.text ?? '';
     // Look forward for the next table before another question.
     let citation: GNCell | undefined;
+    let citationEventBodyIndex: number | undefined;
     for (let j = i + 1; j < events.length; j++) {
       const e2 = events[j];
       if (e2.kind === 'question') break;
@@ -584,11 +707,34 @@ function parseHeadingDriven(
         const cit = readCitationTable(e2.node, serializer);
         if (cit) {
           citation = { ...cit.cell, sourceKind: cit.sourceKind, bodyIndex: e2.bodyIndex };
+          citationEventBodyIndex = e2.bodyIndex;
         }
         attachedTableEventIdxs.add(j);
         break;
       }
     }
+
+    // Response paragraphs = non-heading, non-question <w:p> elements
+    // between this question's bodyIndex and its citation table's
+    // bodyIndex. Direct Marketing 1-row format: response prose lives in
+    // paragraphs, not in a table Response cell. Pre-fix: q.response was
+    // never populated on marketing docs — every response-scanning rule
+    // (F1, H5, I2, I3, G-series, D-series) silently no-op'd. Analyst-
+    // reported bug (Turkey Direct Marketing 2026 returned "0 flagged"
+    // on a doc with 25+ real F1 findings + 2× KVKK / 15× MMS).
+    const responseParas: Array<{ node: Element; bodyIndex: number }> = [];
+    if (ev.bodyIndex !== undefined && citationEventBodyIndex !== undefined) {
+      for (let k = ev.bodyIndex + 1; k < citationEventBodyIndex; k++) {
+        const bp = body.childNodes[k] as Element;
+        if (!bp || bp.localName !== 'p') continue;
+        // Skip paragraphs that are themselves a question or section
+        // heading (shouldn't appear here in a well-formed doc, but be
+        // safe: their inclusion would poison the response text).
+        if (isQuestionHeading(bp) || isSectionHeading(bp)) continue;
+        responseParas.push({ node: bp, bodyIndex: k });
+      }
+    }
+    const response = buildResponseFromParagraphs(responseParas);
 
     // Identifier strategy (priority order):
     //   1. Word auto-number resolved from <w:numPr> (e.g. "1.1.2") — preferred
@@ -646,6 +792,7 @@ function parseHeadingDriven(
       number,
       section,
       questionText,
+      response,
       citation,
       numberProvenance,
       internalNumber,

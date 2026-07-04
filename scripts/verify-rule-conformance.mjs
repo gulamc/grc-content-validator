@@ -65,7 +65,7 @@ const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const { parseGNDocument } = await import(`${root}/app/gn-validator/parser.ts`);
 const { generateDocx } = await import(`${root}/app/gn-validator/output/index.ts`);
 const { RULE_FNS } = await import(`${root}/app/gn-validator/rules/index.ts`);
-const { applyContentValidityGuard } = await import(`${root}/app/gn-validator/rules/content-validity-guard.ts`);
+const { applyContentValidityGuard, downgradeSynthesizedResponseAutos } = await import(`${root}/app/gn-validator/rules/content-validity-guard.ts`);
 const { buildCellMap, buildCellIdIndex } = await import(`${root}/app/gn-validator/output/cell-map.ts`);
 
 // ── SPEC source of truth ─────────────────────────────────────────────────────
@@ -111,9 +111,16 @@ async function runAll(doc) {
   for (const [, fn] of Object.entries(RULE_FNS)) {
     try { raw.push(...(await fn(doc))); } catch {}
   }
-  // Mirror the validate route: apply the content-first guard before
-  // returning. The conformance gate must see exactly what the analyst
-  // sees, not the pre-guard raw findings.
+  // Apply ONLY the content-first guard here — NOT the marketing-response
+  // downgrade. This gate tests RULE EMISSION conformance vs the spec:
+  // "does F1 emit auto as the spec says?" — the answer is intent-level,
+  // measured at the raw rule output. The marketing downgrade is a doc-
+  // level post-processing step (applied by validate/route.ts + fixture
+  // gates) that converts auto → flag for synthesised paragraph responses
+  // because the fix-pipeline can't emit tracked changes there. Applying
+  // it here would blur "rule intent" with "doc-level runtime downgrade"
+  // and false-fail on the exact rules the downgrade is designed to
+  // rescue.
   return applyContentValidityGuard(raw);
 }
 
@@ -202,7 +209,17 @@ for (const d of docs) {
         conformance = '❌';
         issues.push(`code emits ${codeFt}, spec says ${specFt}`);
       }
-      if (specFt === 'auto' && gnTrackedCount === 0 && list.length > 0) {
+      // Marketing exception: for DM docs, response lives in paragraphs
+      // (not a table cell). Auto-fix rules that fire on the response
+      // field CAN'T produce a tracked change — the fix-pipeline is
+      // cell-based. In production these findings are converted to
+      // comments by downgradeSynthesizedResponseAutos in the validate
+      // route. Here (rule-emission conformance) we skip the "spec-auto
+      // must have tracked changes" check when the doc is marketing AND
+      // every finding for this rule is on the response field.
+      const allOnResponse = list.every(f => f.field === 'response');
+      const marketingResponseException = d.type === 'marketing' && allOnResponse;
+      if (specFt === 'auto' && gnTrackedCount === 0 && list.length > 0 && !marketingResponseException) {
         conformance = '❌';
         issues.push(`spec auto-fix has ${list.length} screen findings but 0 GN tracked changes in docx`);
       }
