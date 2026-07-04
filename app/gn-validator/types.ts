@@ -25,7 +25,20 @@ export interface GNCell {
   // set, buildCellIdIndex bypasses its filter+positional logic and resolves the cell
   // by body index directly. Never set on the legacy table-driven path or on response/
   // persona cells; presence gates the bypass.
+  //
+  // Marketing SYNTHESISED RESPONSE also uses this field to store the body index of the
+  // FIRST response paragraph — used by the output pipeline as the fallback anchor for
+  // response findings that have no cellId (see responseParagraphs for per-paragraph
+  // anchoring granularity).
   bodyIndex?: number;
+  // Marketing-only: for a synthesised response cell (response text built from paragraphs
+  // instead of a <w:tc>), the per-paragraph anchor data. Each entry gives one response
+  // paragraph's <w:p> body index and the byte-range in `text` it occupies. The output
+  // pipeline uses this to anchor a comment on the SPECIFIC paragraph containing a rule's
+  // match, rather than on the first response paragraph. Without this, F1 (cross-ref)
+  // and G11 (section-lowercase) comments cluster on the question heading and confuse
+  // the analyst.
+  responseParagraphs?: Array<{ bodyIndex: number; startOffset: number; endOffset: number }>;
 }
 
 // One question block: the question paragraph + the three content cells (overview/breach/pia have all three).

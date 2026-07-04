@@ -92,9 +92,71 @@ export async function buildCleanFixture({ template, parseType, jurisdiction, out
     }
   }
 
+  // Marketing docs store the response in PARAGRAPHS (not cells). The
+  // cell scrub above misses them. Without scrubbing, response-scanning
+  // rules (G2, G3, G7, F1, etc.) fire on the untouched real response
+  // prose and break "single-rule" fixture assertions. Scrub every
+  // paragraph between a question paragraph and the next citation table
+  // to "Not applicable." so response is neutral for the target rule.
+  //
+  // Response TARGETS on marketing docs are not supported by the current
+  // fixtures (all citation-cell tests); if we ever need them, insert a
+  // paragraph before the citation table with the target text.
+  if (parseType === 'marketing') {
+    const bodyEl = docEl.getElementsByTagNameNS(W, 'body')[0];
+    const bodyChildren = [];
+    for (let i = 0; i < bodyEl.childNodes.length; i++) {
+      bodyChildren.push(bodyEl.childNodes[i]);
+    }
+    for (let i = 0; i < bodyChildren.length; i++) {
+      const n = bodyChildren[i];
+      if (!n.localName || n.localName !== 'p') continue;
+      const text = getParagraphText(n).trim();
+      if (!text) continue;
+      // Section heading: "X.Y ..." shape
+      if (/^\d+\.\d+/.test(text)) continue;
+      // Question paragraph: contains '?'
+      if (text.includes('?')) continue;
+      // Everything else = response prose. Replace to neutral placeholder.
+      replaceParagraphText(n, 'Not applicable.');
+    }
+  }
+
   const ser = new XMLSerializer();
   zip.file('word/document.xml', ser.serializeToString(docEl.ownerDocument));
   const outBuf = await zip.generateAsync({ type: 'arraybuffer', compression: 'DEFLATE' });
   writeFileSync(output, Buffer.from(outBuf));
   return { cellsScrubbed: cellMap.size - targets.size, cellsTarget: targets.size };
+}
+
+function getParagraphText(pNode) {
+  let text = '';
+  function walk(n) {
+    for (let i = 0; i < n.childNodes.length; i++) {
+      const c = n.childNodes[i];
+      if (!c.localName) continue;
+      if (c.localName === 'del') continue;
+      if (c.localName === 't') text += c.textContent ?? '';
+      else if (c.childNodes?.length) walk(c);
+    }
+  }
+  walk(pNode);
+  return text;
+}
+
+function replaceParagraphText(pNode, newText) {
+  const ownerDoc = pNode.ownerDocument;
+  // Remove all children except pPr (preserves paragraph style).
+  const toRemove = [];
+  for (let i = 0; i < pNode.childNodes.length; i++) {
+    const c = pNode.childNodes[i];
+    if (c.localName !== 'pPr') toRemove.push(c);
+  }
+  for (const n of toRemove) pNode.removeChild(n);
+  const r = ownerDoc.createElementNS(W, 'w:r');
+  const t = ownerDoc.createElementNS(W, 'w:t');
+  t.setAttribute('xml:space', 'preserve');
+  t.textContent = newText;
+  r.appendChild(t);
+  pNode.appendChild(r);
 }

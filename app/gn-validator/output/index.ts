@@ -149,6 +149,35 @@ export async function generateDocx(
         const entry = cellMap.get(cellId);
         if (entry) return { result: r, entry };
       }
+      // Marketing docs: response has no <w:tc> — it was synthesised from
+      // body paragraphs by parser-marketing.ts. Rules match against the
+      // synthesised text, so we can locate the SPECIFIC response paragraph
+      // that contains a finding's match by mapping the finding's response-
+      // text offset back through response.responseParagraphs[].
+      // Without this, response findings anchored on the question heading
+      // paragraph and the analyst saw comments on the QUESTION text rather
+      // than on the response prose the rule actually matched (F1 flags on
+      // "Please refer to Section X" landed on the question sentence, not
+      // on the cross-reference itself).
+      if (r.field === 'response' && q.response?.responseParagraphs) {
+        const paras = q.response.responseParagraphs;
+        // Rules with a matchText offset would allow exact anchoring; we
+        // don't have that on every finding, so pick the FIRST match of
+        // r.matchText (if provided) in the response text; else use the
+        // first response paragraph.
+        let paraBodyIndex = paras[0]?.bodyIndex;
+        if (r.matchText && q.response.text) {
+          const idx = q.response.text.indexOf(r.matchText);
+          if (idx >= 0) {
+            const hit = paras.find(p => idx >= p.startOffset && idx <= p.endOffset);
+            if (hit) paraBodyIndex = hit.bodyIndex;
+          }
+        }
+        if (paraBodyIndex !== undefined) {
+          const p = bodyChildPs[paraBodyIndex];
+          if (p?.localName === 'p') return { result: r, pNode: p };
+        }
+      }
       const headingIdx = q.headingBodyIndex;
       if (headingIdx !== undefined) {
         const headingP = bodyChildPs[headingIdx];

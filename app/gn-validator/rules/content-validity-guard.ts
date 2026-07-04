@@ -1,4 +1,4 @@
-import type { GNValidationResult } from '../types';
+import type { GNDocument, GNValidationResult } from '../types';
 
 /**
  * Generalized content-first guard.
@@ -90,6 +90,40 @@ export function applyContentValidityGuard(
     if (!FORMATTING_AUTOFIX_SUPPRESSED.has(r.ruleId)) return true;
     if (r.fixType !== 'auto') return true;
     return !flaggedCells.has(`${r.questionNumber}::${r.field}`);
+  });
+}
+
+/**
+ * Direct Marketing docs store the response in PARAGRAPHS, not in a table
+ * Response cell (see parser-marketing.ts). The output pipeline's fix-
+ * pipeline (auto-fix write-back) is CELL-BASED — it can't apply tracked
+ * changes to a synthesised response that has no `<w:tc>` source. Pre-fix,
+ * auto-fix findings on marketing response fields were silently dropped
+ * from the output docx: the analyst saw them on-screen (in the display
+ * payload) but not in the Word file.
+ *
+ * Fix: downgrade `auto → flag` for those findings so they anchor as
+ * comments on the question heading paragraph via the fallback in
+ * output/index.ts. The analyst still sees every finding; they just
+ * apply the fix manually rather than getting a tracked change.
+ *
+ * NOT a permanent architectural choice — the proper follow-up is to
+ * extend the fix-pipeline to apply diffs to paragraph runs directly.
+ * Until then, this downgrade is the "never silently drop a finding"
+ * safety net for DM docs. Documented in the Turkey fixture.
+ *
+ * Only affects `type === 'marketing'` docs. Overview/Breach/PIA/
+ * Employment (real table Response cells) are unchanged.
+ */
+export function downgradeSynthesizedResponseAutos(
+  doc: GNDocument,
+  results: GNValidationResult[],
+): GNValidationResult[] {
+  if (doc.type !== 'marketing') return results;
+  return results.map(r => {
+    if (r.fixType !== 'auto') return r;
+    if (r.field !== 'response') return r;
+    return { ...r, fixType: 'flag' };
   });
 }
 

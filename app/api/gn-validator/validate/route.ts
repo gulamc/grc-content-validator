@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { GNType } from '@/app/gn-validator/types';
 import { parseGNDocument } from '@/app/gn-validator/parser';
 import { runGNRules } from '@/app/gn-validator/rules/index';
-import { applyContentValidityGuard } from '@/app/gn-validator/rules/content-validity-guard';
+import { applyContentValidityGuard, downgradeSynthesizedResponseAutos } from '@/app/gn-validator/rules/content-validity-guard';
 import { generateDocx } from '@/app/gn-validator/output/index';
 import { ALL_JURISDICTIONS, isEUJurisdiction } from '@/app/gn-validator/utils/jurisdictions';
 
@@ -69,7 +69,20 @@ export async function POST(request: NextRequest) {
     // HOW a cell is punctuated when the rule already flagged WHAT the cell
     // should contain. See app/gn-validator/rules/content-validity-guard.ts
     // for the full rationale + set membership.
-    const results = applyContentValidityGuard(rawResults);
+    // Two-step guard:
+    //   1. Content-first: drop formatting auto-fixes on cells where a
+    //      content-validity rule fired (see comment above).
+    //   2. Marketing response downgrade: on Direct Marketing docs the
+    //      response lives in paragraphs (not a table cell), so the
+    //      cell-based fix-pipeline can't apply auto tracked-changes to
+    //      it. Downgrade auto → flag so the finding becomes a comment
+    //      anchored on the question heading paragraph — visible in
+    //      Word instead of silently dropped. See
+    //      downgradeSynthesizedResponseAutos in the guard file.
+    const results = downgradeSynthesizedResponseAutos(
+      doc,
+      applyContentValidityGuard(rawResults),
+    );
 
     const outputBuf = await generateDocx(doc, results);
 
