@@ -42,6 +42,7 @@ scripts/*
 !scripts/verify-turkey-marketing-fixture-abcd.mjs
 !scripts/verify-marketing-response-parity.mjs
 !scripts/verify-turkey-live-route.mjs
+!scripts/verify-marketing-rule-config-consistency.mjs
 !scripts/lib-clean-fixture.mjs
 !scripts/compile-spec.mjs
 !scripts/parse-rqf-template.mjs
