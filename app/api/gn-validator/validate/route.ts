@@ -49,10 +49,29 @@ export async function POST(request: NextRequest) {
     const qCount = doc.questions.length;
     if (qCount >= 5) {
       const withResponse = doc.questions.filter(q => q.response).length;
+      const withCitation = doc.questions.filter(q => q.citation).length;
       const withPersona  = doc.questions.filter(q => q.persona).length;
       let mismatch: string | null = null;
-      if (gnType === 'marketing' && withResponse / qCount > 0.1) {
-        mismatch = `Template mismatch: a Marketing GN was expected but ${withResponse} of ${qCount} questions have a Response field. Please confirm the GN type is correct.`;
+      // Marketing mismatch — updated after the DM response-paragraph fix.
+      //
+      // Historical check: `gnType === 'marketing' && withResponse / qCount > 0.1`.
+      // Rationale (obsolete): DM 1-row format has no Response cells, so any doc
+      // with a Response field on marketing dispatch must be mis-typed. This was
+      // dead code pre-fix — parser-marketing never populated q.response — and
+      // is actively WRONG post-fix, because DM responses now populate from
+      // paragraphs. Kept blocking real DM docs on the deployed route.
+      //
+      // Corrected signal — `withCitation`: real DM docs land 0.85–1.00 on
+      // citation-populated-share; Overview/Breach docs mis-typed as
+      // marketing land 0.00 (parser-marketing's readCitationTable rejects
+      // their row-0 "Response" label — the citation is undefined). Empirical
+      // separation (diagnostic run 2026-07-05):
+      //   Real DM:   Turkey 1.00, Germany 1.00, Philippines 0.85
+      //   Mis-typed: Connecticut Overview 0.00, Belgium Breach 0.00
+      //   Alberta Overview → 0 questions (caught by qCount === 0 guard above)
+      // Threshold 0.5 preserves comfortable margin on both sides.
+      if (gnType === 'marketing' && withCitation / qCount < 0.5) {
+        mismatch = `Template mismatch: a Marketing GN was expected but only ${withCitation} of ${qCount} questions have a Citation table. Please confirm the GN type is correct — this pattern indicates an Overview / Breach / PIA doc (whose citations sit in row 2 of a 3-row table, not the row-0 "Citation" cell parser-marketing looks for).`;
       } else if ((gnType === 'overview' || gnType === 'breach' || gnType === 'pia') && withResponse / qCount < 0.5) {
         mismatch = `Template mismatch: a ${gnType.charAt(0).toUpperCase() + gnType.slice(1)} GN was expected but only ${withResponse} of ${qCount} questions have a Response field. Please confirm the GN type is correct.`;
       } else if (gnType === 'employment' && withPersona / qCount > 0.1) {
