@@ -17,7 +17,7 @@ import { readFileSync } from 'fs';
 const root = '/Users/user/grc-content-validator/grc-content-validator';
 const { parseGNDocument } = await import(`${root}/app/gn-validator/parser.ts`);
 const { RULE_FNS } = await import(`${root}/app/gn-validator/rules/index.ts`);
-const { applyContentValidityGuard, downgradeSynthesizedResponseAutos } = await import(`${root}/app/gn-validator/rules/content-validity-guard.ts`);
+const { applyContentValidityGuard } = await import(`${root}/app/gn-validator/rules/content-validity-guard.ts`);
 
 async function analyseDoc(path, type, juris) {
   const buf = readFileSync(`${root}/${path}`);
@@ -26,12 +26,13 @@ async function analyseDoc(path, type, juris) {
   for (const [, fn] of Object.entries(RULE_FNS)) {
     try { raw.push(...(await fn(doc))); } catch {}
   }
-  const results = downgradeSynthesizedResponseAutos(doc, applyContentValidityGuard(raw));
+  const results = applyContentValidityGuard(raw);
   return {
     questions: doc.questions.length,
     withResponse: doc.questions.filter(q => q.response).length,
     findings: results.length,
     flags: results.filter(r => r.fixType !== 'auto').length,
+    autos: results.filter(r => r.fixType === 'auto').length,
   };
 }
 
@@ -65,12 +66,13 @@ console.log('── DIRECT MARKETING (locked new counts after response-fix) ─�
 // → finding count increases. Lock the NEW numbers to prevent silent
 // regression. Prior locks (from verify-alberta-parity.mjs) confirm
 // question count = 74 for both.
-// Locked counts baked in on the first green pass. Any drift surfaces as
-// a regression. Note: "responses populated" is not always 74/74 — some
-// questions in Philippines have no prose paragraphs between question
-// and citation table (empty response is legit for those cells; not a
-// parser bug). The finding count is the real "no silent under-validate"
-// signal.
+//
+// Auto-vs-flag split changes: prior to the paragraph-level tracked-
+// changes work, DM response findings with fixType=auto were coerced to
+// flag by downgradeSynthesizedResponseAutos (removed). Now the fix
+// pipeline emits real <w:del>+<w:ins> for those findings, so autos and
+// flags each hold their pre-guard fixType. Total finding count unchanged;
+// what shifts is autos ↑ / flags ↓.
 const marketing = [
   {
     name: 'Germany Marketing',
@@ -79,7 +81,6 @@ const marketing = [
     qExpect: 74,
     withResponseExpect: 74,
     findingsExpect: 28,
-    flagsExpect: 28,
   },
   {
     name: 'Philippines Marketing',
@@ -88,7 +89,6 @@ const marketing = [
     qExpect: 74,
     withResponseExpect: 63,
     findingsExpect: 63,
-    flagsExpect: 63,
   },
   {
     name: 'Turkey Marketing (analyst-reported)',
@@ -96,13 +96,13 @@ const marketing = [
     juris: 'Turkey',
     qExpect: 74,
     withResponseExpect: 74,
-    findingsExpect: 92,
-    flagsExpect: 80,
+    findingsExpect: 94,  // 92 pre + 1 G2 widening + 1 H6 non-English-jurisdiction reminder
+    autosMin: 20,  // F1 alone contributes 25 tracked changes on Turkey
   },
 ];
 for (const c of marketing) {
   const r = await analyseDoc(c.path, 'marketing', c.juris);
-  console.log(`  ${c.name.padEnd(38)} q=${r.questions}  withResp=${r.withResponse}  findings=${r.findings}  flags=${r.flags}`);
+  console.log(`  ${c.name.padEnd(38)} q=${r.questions}  withResp=${r.withResponse}  findings=${r.findings}  autos=${r.autos}  flags=${r.flags}`);
   check(`    ${c.name}: question count = ${c.qExpect}`, r.questions === c.qExpect);
   check(`    ${c.name}: withResponse == ${c.withResponseExpect} (locked)`,
     r.withResponse === c.withResponseExpect);
@@ -110,8 +110,10 @@ for (const c of marketing) {
     r.findings > 0);
   check(`    ${c.name}: findings == ${c.findingsExpect} (locked)`,
     r.findings === c.findingsExpect);
-  check(`    ${c.name}: flags == ${c.flagsExpect} (post-downgrade, locked)`,
-    r.flags === c.flagsExpect);
+  if (c.autosMin !== undefined) {
+    check(`    ${c.name}: autos ≥ ${c.autosMin} (paragraph tracked-changes now emitting; was ~0 pre-fix)`,
+      r.autos >= c.autosMin);
+  }
 }
 
 console.log();

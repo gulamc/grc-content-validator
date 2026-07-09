@@ -293,20 +293,73 @@ export async function ruleH5(doc: GNDocument): Promise<GNValidationResult[]> {
   return results;
 }
 
-// ── H6 — Non-English Source Notation Order ────────────────────────────────────
+// ── H6 — Non-English Source Notation ─────────────────────────────────────────
+//
+// Spec (dimension-spec.xlsx, row H6): "When a law is only available in a
+// non-English language, the phrase '(only available in [language] here)'
+// must appear after the law name."
+//
+// Two detection branches:
+//
+//   (a) ORDER — reversed parenthetical order:
+//         Wrong:   ...(the Code of Administrative Offences) (only available in Russian here)
+//         Correct: ...(only available in Russian here) (the Code of Administrative Offences)
+//
+//   (b) MISSING — non-English-primary jurisdiction with no notation phrase:
+//         When doc.jurisdiction is not in ENGLISH_PRIMARY_JURISDICTIONS AND
+//         the doc contains NO "(only available in X here)" phrase AND the
+//         response references a law by name, fire ONCE per doc as a manual-
+//         review reminder for the analyst. Analyst-reported on 2026-07-08
+//         (Turkey DM): H6 didn't fire even though every law referenced
+//         (KVKK, Electronic Commerce Law, etc.) is only officially
+//         available in Turkish.
 
-// Flags when a "the Law Name" parenthetical appears BEFORE the notation instead of after.
-// Wrong:   ...(the Code of Administrative Offences) (only available in Russian here)
-// Correct: ...(only available in Russian here) (the Code of Administrative Offences)
-const H6_RE = /\(the [^)]+\)\s*\(only available in [\w\s]+here\)/i;
+// Jurisdictions where laws are ALWAYS officially available in English —
+// either as sole official legal language, or as co-equal official
+// (bilingual/multilingual) with English being the working legal
+// language. All others fall into the "non-English-primary" bucket where
+// H6 (b) requires the analyst to consider the notation phrase.
+const ENGLISH_PRIMARY_JURISDICTIONS = new Set<string>([
+  // Sole English or English + Anglophone-legal
+  'United States', 'United Kingdom', 'Ireland', 'Australia', 'New Zealand',
+  'Canada', 'Singapore', 'India', 'Malta', 'Cyprus', 'Philippines',
+  'South Africa', 'Nigeria', 'Kenya', 'Ghana', 'Uganda', 'Zimbabwe',
+  'Zambia', 'Botswana', 'Namibia',
+  // US states (all 50 + DC + territories)
+  'Alabama', 'Alaska', 'Arizona', 'Arkansas', 'California', 'Colorado',
+  'Connecticut', 'Delaware', 'District of Columbia', 'Florida', 'Georgia',
+  'Hawaii', 'Idaho', 'Illinois', 'Indiana', 'Iowa', 'Kansas', 'Kentucky',
+  'Louisiana', 'Maine', 'Maryland', 'Massachusetts', 'Michigan',
+  'Minnesota', 'Mississippi', 'Missouri', 'Montana', 'Nebraska', 'Nevada',
+  'New Hampshire', 'New Jersey', 'New Mexico', 'New York',
+  'North Carolina', 'North Dakota', 'Ohio', 'Oklahoma', 'Oregon',
+  'Pennsylvania', 'Rhode Island', 'South Carolina', 'South Dakota',
+  'Tennessee', 'Texas', 'Utah', 'Vermont', 'Virginia', 'Washington',
+  'West Virginia', 'Wisconsin', 'Wyoming', 'Puerto Rico',
+  // Canadian anglophone provinces (federal law bilingual; provincial
+  // law English except Quebec — where it's French-primary)
+  'Alberta', 'British Columbia', 'Ontario', 'Manitoba', 'Saskatchewan',
+  'Nova Scotia', 'New Brunswick', 'Newfoundland and Labrador',
+  'Prince Edward Island', 'Yukon', 'Northwest Territories', 'Nunavut',
+]);
+
+const H6_ORDER_RE = /\(the [^)]+\)\s*\(only available in [\w\s]+here\)/i;
+const H6_NOTATION_RE = /\(only\s+available\s+in\s+[\w\s]+here\)/i;
+// Loose "the X Law/Regulation/Act/Code/Ordinance/Decree" reference. Titlecase
+// leading word + ≤80-char body + one of the legal-instrument nouns. Matches
+// "the Personal Data Protection Law", "the Electronic Commerce Law No. 6563",
+// "the KVKK", "the Regulation on Commercial Electronic Communication", etc.
+const H6_LAW_REFERENCE_RE = /\b(?:the\s+)?[A-Z][A-Za-z0-9][^,\.\(\)]{4,80}?\s+(?:Law|Regulation|Act|Code|Directive|Statute|Ordinance|Decree)\b/;
 
 export async function ruleH6(doc: GNDocument): Promise<GNValidationResult[]> {
   const results: GNValidationResult[] = [];
+
+  // Branch (a) — reversed-order parenthetical (unchanged).
   for (const q of doc.questions) {
     for (const field of ['response', 'citation'] as const) {
       const cell = q[field];
       if (!cell?.text.trim()) continue;
-      if (!H6_RE.test(cell.text)) continue;
+      if (!H6_ORDER_RE.test(cell.text)) continue;
       results.push({
         ruleId: 'H6',
         questionNumber: q.number,
@@ -317,6 +370,39 @@ export async function ruleH6(doc: GNDocument): Promise<GNValidationResult[]> {
       });
     }
   }
+
+  // Branch (b) — missing notation on non-English-primary jurisdiction.
+  // One document-level reminder firing on the first law-referencing response
+  // when NO "only available in X here" phrase exists in any response or
+  // citation cell. Rate-limited to ONE finding per doc to keep the signal
+  // clean; analyst manually reviews each law reference in that context.
+  if (doc.jurisdiction && !ENGLISH_PRIMARY_JURISDICTIONS.has(doc.jurisdiction)) {
+    let docHasNotation = false;
+    for (const q of doc.questions) {
+      for (const f of ['response', 'citation'] as const) {
+        const t = q[f]?.text ?? '';
+        if (H6_NOTATION_RE.test(t)) { docHasNotation = true; break; }
+      }
+      if (docHasNotation) break;
+    }
+    if (!docHasNotation) {
+      for (const q of doc.questions) {
+        const t = q.response?.text ?? '';
+        if (!t.trim()) continue;
+        if (!H6_LAW_REFERENCE_RE.test(t)) continue;
+        results.push({
+          ruleId: 'H6',
+          questionNumber: q.number,
+          field: 'response',
+          severity: 'error',
+          message: `Non-English source notation missing: ${doc.jurisdiction} is a non-English-primary jurisdiction. For any law only available in the local language, the phrase "(only available in [language] here)" must appear after the law name. This document contains no such notation — verify each law reference.`,
+          fixType: 'flag',
+        });
+        break;  // ONE per doc
+      }
+    }
+  }
+
   return results;
 }
 
