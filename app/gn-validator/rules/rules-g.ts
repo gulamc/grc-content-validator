@@ -155,12 +155,61 @@ export async function ruleG1(doc: GNDocument): Promise<GNValidationResult[]> {
 }
 
 // ── G2 — Oxford Comma ────────────────────────────────────────────────────────
-
+//
+// Spec (dimension-spec.xlsx, row G2): "Lists of three or more items must
+// include a comma before the final 'and'/'or'."
+//
+// Two-pass detection to catch both simple and phrase-based lists without
+// over-firing on clause continuations:
+//
+//   Pass 1 — SINGLE-WORD ITEMS: ", W and X"
+//     ",\s+word\s+and\s+word" — the historical, safe pattern. Fires when
+//     the last two list items are single words. The comma that appears
+//     BEFORE the trailing pair is what implicitly proves this is a list
+//     (a bare "X and Y" without the leading comma is a 2-item pair).
+//
+//   Pass 2 — MULTI-WORD ITEMS in a 4+ item list: ", <item0>, <itemA> and <itemB>"
+//     Requires TWO commas to prove the pattern is a genuine list of 3+
+//     items where the LAST two items are multi-word. A single-comma
+//     multi-word pattern (", A phrase and B phrase") is systematically
+//     a 2-item enumeration ("natural persons and legal persons") or a
+//     compound predicate ("regulators and courts place emphasis"), NOT
+//     a 3+ item list — adding a comma there corrupts the sentence.
+//     The 2-comma requirement is the practical discriminator: analyst QC
+//     on Germany/Philippines/Turkey (2026-07) showed 1-comma widening
+//     produced 12+ false positives across 3 docs; 2-comma widening
+//     produced 1 true positive and 0 false positives.
 const OXFORD_COMMA_RE = /,\s+([a-zA-Z]+)\s+and\s+([a-zA-Z]+)/g;
+
+// Multi-word items in a 4+ item list. Match layout:
+//   [$1: ", <item0>"], "," , [$2: " <itemA>"], " and ", [$3: "<itemB>"]
+// Fix: $1 + "," + $2 + ", and " + $3   (Oxford comma inserted before "and").
+const OXFORD_COMMA_WIDE_RE = /(,\s+[a-zA-Z][a-zA-Z\s-]{0,40}[a-zA-Z]),(\s+(?:[a-zA-Z][a-zA-Z-]{0,25}\s+){0,3}[a-zA-Z][a-zA-Z-]{0,25})\s+and\s+((?:[a-zA-Z][a-zA-Z-]{0,25}\s+){0,3}[a-zA-Z][a-zA-Z-]{0,25})(?=[.,;:!?)\s]|$)/g;
+
 const JOB_TITLE_RE = /\b(founder|co-founder|ceo|cfo|cto|coo|owner|president|director|manager|officer|partner|member|head|chief|lead|senior)\s+and\s+(founder|co-founder|ceo|cfo|cto|coo|owner|president|director|manager|officer|partner|member|head|chief|lead|senior|principal|advisor|consultant|analyst|specialist|expert|associate|assistant)\b/i;
 
+// Words whose presence in an "item" position typically signals a
+// subordinate clause, not a noun-phrase list item.
+const G2_CLAUSE_MARKER_RE = /\b(?:however|therefore|although|moreover|furthermore|additionally|because|which|who|whom|whose|that|while|when|where|whereas|though|but|since|so|hence)\b/i;
+
+// A candidate item containing " and " or " or " is a compound (", A and
+// B, or C and D") not a simple list item. Rejects patterns like
+// "…associations and societies, or charitable and social organizations".
+const G2_ITEM_HAS_CONJUNCTION_RE = /\s(?:and|or)\s/i;
+
+// Preposition/participle-led items indicate a preposition/participle
+// clause where "X and Y" is a 2-item scope, not a 3+ item list.
+// Rejects "…, including legal persons, against unfair commercial
+// practices and unreasonable nuisance" (2-item scope of "against").
+const G2_PREPOSITION_START_RE = /^\s*(?:excluding|including|such\s+as|using|against|regarding|concerning|considering|following|with|without|for|by|from|of|as|via|per|among|between|towards?|onto|into|through|during)\s+/i;
+
+// Adverbial phrases ("on the other hand", "in fact") — parenthetical, not
+// a list item.
+const G2_ADVERBIAL_START_RE = /^\s*(?:on|in|at)\s+(?:the|one|another)\b/i;
+
 export function applyG2Fix(cellText: string): string {
-  return cellText.replace(
+  // Pass 1 — single-word last-pair (historical).
+  let after = cellText.replace(
     OXFORD_COMMA_RE,
     (match, _word1, _word2, offset, str) => {
       const context = str.substring(Math.max(0, offset - 100), offset + match.length + 50);
@@ -171,6 +220,31 @@ export function applyG2Fix(cellText: string): string {
       return match.replace(/(\s+and\s+)/, ', and ');
     }
   );
+
+  // Pass 2 — multi-word items in a 4+ item list.
+  after = after.replace(
+    OXFORD_COMMA_WIDE_RE,
+    (match, item0WithComma, itemAWithSpace, itemB, offset, str) => {
+      const context = str.substring(Math.max(0, offset - 100), offset + match.length + 50);
+      if (/\b\d{4}\b/.test(str.substring(Math.max(0, offset - 50), offset))) return match;
+      if (JOB_TITLE_RE.test(context)) return match;
+      if (G2_CLAUSE_MARKER_RE.test(item0WithComma)) return match;
+      if (G2_CLAUSE_MARKER_RE.test(itemAWithSpace)) return match;
+      if (G2_CLAUSE_MARKER_RE.test(itemB)) return match;
+      // Compound-inside guard: item0 with "and"/"or" is a compound pair,
+      // not a simple list item. Similarly for itemA.
+      const item0Content = item0WithComma.replace(/^,\s*/, '');
+      if (G2_ITEM_HAS_CONJUNCTION_RE.test(item0Content)) return match;
+      if (G2_ITEM_HAS_CONJUNCTION_RE.test(itemAWithSpace)) return match;
+      // Preposition/participle/adverbial-led item0 → not a list item.
+      if (G2_PREPOSITION_START_RE.test(item0Content)) return match;
+      if (G2_ADVERBIAL_START_RE.test(item0Content)) return match;
+      // Insert Oxford comma before "and". Preserves item0 verbatim.
+      return `${item0WithComma},${itemAWithSpace}, and ${itemB}`;
+    }
+  );
+
+  return after;
 }
 
 export async function ruleG2(doc: GNDocument): Promise<GNValidationResult[]> {

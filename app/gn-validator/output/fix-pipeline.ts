@@ -100,6 +100,63 @@ export async function runFixPipeline(
     });
   }
 
+  // ── Synth: Direct Marketing response CellState ────────────────────────────
+  //
+  // DM docs (parser-marketing) synthesise q.response from body paragraphs
+  // (parser-marketing's buildResponseFromParagraphs), NOT from a table cell.
+  // The cellIdIndex therefore has no `${q.number}:response` mapping for DM
+  // docs, so the auto-fix loop below (L131 `if (!cellId) continue`) silently
+  // drops every response auto-fix (F1/G2/G7/G11/H1/H3). The pre-existing
+  // stopgap was downgradeSynthesizedResponseAutos in route.ts which coerced
+  // these to comments — unshippable per spec (F1 et al. are AUTO in the
+  // signed dimension spec).
+  //
+  // Fix: build synthetic CellState entries whose `paragraphs[].pNode` points
+  // at the real <w:p> elements in the body, so applyDiffToParagraph /
+  // applyReplaceSpansToParagraph emit real <w:del>+<w:ins> tracked changes
+  // on the response paragraphs — identical mechanism to cell-based responses.
+  //
+  // Registration is idempotent (skips keys already resolved to a real cell)
+  // and inert on non-marketing docs (responseParagraphs is only populated by
+  // parser-marketing). No effect on Alberta/Connecticut/Belgium/etc.
+  if (doc.type === 'marketing') {
+    let body: Element | null = null;
+    for (const entry of cellMap.values()) {
+      const candidate = entry.tcNode.parentNode?.parentNode?.parentNode as Element | null;
+      if (candidate?.localName === 'body') { body = candidate; break; }
+    }
+    if (body) {
+      const bodyChildPs: Element[] = [];
+      for (let i = 0; i < body.childNodes.length; i++) {
+        bodyChildPs[i] = body.childNodes[i] as Element;
+      }
+      for (const q of doc.questions) {
+        const paras = q.response?.responseParagraphs;
+        if (!paras || paras.length === 0) continue;
+        const cellKey = `${q.number}:response`;
+        if (cellIdIndex.has(cellKey)) continue;   // real cell exists — don't override
+        const synthCellId = `synth-response:${q.number}`;
+        const paragraphStates: ParaState[] = [];
+        for (const rp of paras) {
+          const pNode = bodyChildPs[rp.bodyIndex];
+          if (!pNode || pNode.localName !== 'p') continue;
+          const paraText = q.response!.text.slice(rp.startOffset, rp.endOffset);
+          paragraphStates.push({
+            pNode,
+            originalText: paraText,
+            currentText: paraText,
+          });
+        }
+        if (paragraphStates.length === 0) continue;
+        state.set(synthCellId, {
+          cellId: synthCellId,
+          paragraphs: paragraphStates,
+        });
+        cellIdIndex.set(cellKey, synthCellId);
+      }
+    }
+  }
+
   // Helper: cells in the same <w:tbl> as `anchorCellId`, at rowIndex >= 1.
   // Used by the multi-row citation branch to clear non-anchor rows of a
   // consolidated Citations table after collapsing all citations into row 0

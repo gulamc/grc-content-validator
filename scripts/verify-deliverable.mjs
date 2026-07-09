@@ -30,24 +30,20 @@ const root = '/Users/user/grc-content-validator/grc-content-validator';
 const { parseGNDocument } = await import(`${root}/app/gn-validator/parser.ts`);
 const { generateDocx } = await import(`${root}/app/gn-validator/output/index.ts`);
 const { RULE_FNS } = await import(`${root}/app/gn-validator/rules/index.ts`);
-const { applyContentValidityGuard, downgradeSynthesizedResponseAutos } = await import(`${root}/app/gn-validator/rules/content-validity-guard.ts`);
+const { applyContentValidityGuard } = await import(`${root}/app/gn-validator/rules/content-validity-guard.ts`);
 
-// Mirrors the validate route: no multi-row downgrade. B1 multi-row Path A
-// write-back lives entirely in `app/gn-validator/output/fix-pipeline.ts`,
-// so the harness exercises the same path an analyst's upload runs through.
-// Apply the content-first guard before delivering results — same as
-// validate/route.ts does in production.
+// Mirrors the validate route: content-first guard only. The prior second
+// step (downgradeSynthesizedResponseAutos) was removed once runFixPipeline
+// learned to synthesise ParaState-only CellStates from a marketing doc's
+// `q.response.responseParagraphs`, so DM response autos now emit real
+// <w:del>+<w:ins> tracked changes on the paragraph rather than becoming
+// comments. See app/gn-validator/output/fix-pipeline.ts.
 async function runAll(doc) {
   const raw = [];
   for (const [, fn] of Object.entries(RULE_FNS)) {
     try { raw.push(...(await fn(doc))); } catch {}
   }
-  // Mirror the validate route's two-step guard so this deliverable gate
-  // sees the same result set the analyst does. Without the downgrade,
-  // marketing docs' response-field autos count against the tracked-
-  // changes lower bound but the fix-pipeline can't emit tracked changes
-  // for a synthesised (paragraph-derived) response cell.
-  return downgradeSynthesizedResponseAutos(doc, applyContentValidityGuard(raw));
+  return applyContentValidityGuard(raw);
 }
 
 const docs = [

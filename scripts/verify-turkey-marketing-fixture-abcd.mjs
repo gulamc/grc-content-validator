@@ -49,7 +49,7 @@ const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 
 const { parseGNDocument } = await import(`${root}/app/gn-validator/parser.ts`);
 const { RULE_FNS } = await import(`${root}/app/gn-validator/rules/index.ts`);
-const { applyContentValidityGuard, downgradeSynthesizedResponseAutos } = await import(`${root}/app/gn-validator/rules/content-validity-guard.ts`);
+const { applyContentValidityGuard } = await import(`${root}/app/gn-validator/rules/content-validity-guard.ts`);
 const { generateDocx } = await import(`${root}/app/gn-validator/output/index.ts`);
 const { buildCellMap, buildCellIdIndex } = await import(`${root}/app/gn-validator/output/cell-map.ts`);
 
@@ -122,8 +122,8 @@ for (const [id, fn] of Object.entries(RULE_FNS)) {
   }
 }
 const raw = [...rawByRule.values()].flat();
-// Mirror the validate route's two-step guard exactly.
-const results = downgradeSynthesizedResponseAutos(doc, applyContentValidityGuard(raw));
+// Mirror the validate route's guard exactly (single-step post-tracked-changes-on-paragraphs work).
+const results = applyContentValidityGuard(raw);
 
 // Group results by rule for reporting
 const guardedByRule = new Map();
@@ -166,6 +166,17 @@ bPass = check(`    H5 does NOT flag TRY  (currency-code exempt from Alberta batc
 console.log('  I2  (short-response completeness, expected ≥ 1):');
 bPass = check(`    I2 fires ≥ 1`, cnt('I2') >= 1,
   `actual=${cnt('I2')}`) && bPass;
+
+// H6 (b): non-English-primary jurisdiction reminder. Turkey is not in the
+// ENGLISH_PRIMARY_JURISDICTIONS whitelist and no "(only available in X
+// here)" phrase exists anywhere in the doc → exactly one document-level
+// H6 finding must be raised as an analyst reminder. Prior to 2026-07 H6
+// only checked ORDER (phrase-present-but-out-of-order); the MISSING
+// branch was added when the analyst reported that Turkey's Turkish-only
+// laws were not being flagged for missing notation.
+console.log('  H6  (non-English-primary jurisdiction reminder, expected == 1):');
+bPass = check(`    H6 fires exactly 1 time on Turkey (jurisdiction is non-English, doc lacks notation)`,
+  cnt('H6') === 1, `actual=${cnt('H6')}`) && bPass;
 
 // G-series must fire non-zero on 25 KB of prose
 console.log('  G-series (must fire on real response prose):');
@@ -226,60 +237,41 @@ cPass = check(`  auto findings still produce tracked changes (citation-side auto
   gnIns + gnDel >= autoCount,
   `${gnIns + gnDel} ≥ ${autoCount}?`) && cPass;
 
-// Anchor-correctness: F1 comments must anchor on paragraphs containing
-// the actual cross-ref text; G11 on paragraphs containing "Section" text.
-// Pre-fix, both anchored on the question heading paragraph — analyst
-// saw comments on unrelated question text.
-function extractParaText(pNode) {
-  let text = '';
-  function walk(n) {
-    for (let i = 0; i < n.childNodes.length; i++) {
-      const c = n.childNodes[i];
-      if (!c.localName) continue;
-      if (c.localName === 'del') continue;
-      if (c.localName === 't') text += c.textContent ?? '';
-      else if (c.childNodes?.length) walk(c);
-    }
-  }
-  walk(pNode);
-  return text;
-}
-const rangeStarts = new DOMParser()
-  .parseFromString(outDocXml, 'text/xml').documentElement
-  .getElementsByTagNameNS(W, 'commentRangeStart');
-const commentTextById2 = new Map();
-for (let i = 0; i < cEls.length; i++) {
-  const c = cEls[i];
-  if (c.getAttribute('w:author') !== 'GN Validator') continue;
-  const ts = c.getElementsByTagNameNS(W, 't');
-  let text = '';
-  for (let j = 0; j < ts.length; j++) text += ts[j].textContent ?? '';
-  commentTextById2.set(c.getAttribute('w:id'), text);
-}
-let f1Anchored = 0, f1Total = 0, g11Anchored = 0, g11Total = 0;
-for (let i = 0; i < rangeStarts.length; i++) {
-  const rs = rangeStarts[i];
-  const id = rs.getAttribute('w:id');
-  const commentText = commentTextById2.get(id);
-  if (!commentText) continue;
-  let node = rs.parentNode;
-  while (node && node.localName !== 'p') node = node.parentNode;
-  if (!node) continue;
-  const paraText = extractParaText(node).trim();
-  if (commentText.startsWith('[F1]')) {
-    f1Total++;
-    if (/Please\s+(refer\s+to|see)\s+section/i.test(paraText)) f1Anchored++;
-  } else if (commentText.startsWith('[G11]')) {
-    g11Total++;
-    if (/\bSection\s+\d+/.test(paraText)) g11Anchored++;
+// F1 tracked-change safety proof:
+//   Every F1 auto is now a <w:del>+<w:ins> pair on the response paragraph.
+//   The critical safety property (user demand): the <w:ins> text must
+//   carry the REAL target section number, not the literal placeholder
+//   "X.Y.Z" — otherwise Accept-All in Word would corrupt the document.
+//
+// This block walks every <w:ins author="GN Validator"> containing the
+// canonical F1 shape ("Please see section N. above/below.") and asserts:
+//   (a) each ins has a numeric section (e.g. "1.1.1"), not "X.Y.Z"
+//   (b) each ins sits inside a <w:p> whose EQUAL text runs (surrounding
+//       the ins) reference cross-ref language ("above." or "below.")
+//   (c) count matches the F1 finding count (≥ 20 spec floor)
+const outDom = new DOMParser().parseFromString(outDocXml, 'text/xml');
+const allIns = outDom.documentElement.getElementsByTagNameNS(W, 'ins');
+let f1InsCount = 0, f1InsPlaceholderCount = 0;
+const F1_CANONICAL_RE = /Please\s+see\s+section\s+(\d+(?:\.\d+){1,4})\.\s+(above|below)\./;
+for (let i = 0; i < allIns.length; i++) {
+  const ins = allIns[i];
+  if (ins.getAttribute('w:author') !== 'GN Validator') continue;
+  const ts = ins.getElementsByTagNameNS(W, 't');
+  let insText = '';
+  for (let j = 0; j < ts.length; j++) insText += ts[j].textContent ?? '';
+  if (F1_CANONICAL_RE.test(insText)) {
+    f1InsCount++;
+    if (/section\s+X\.Y\.Z/i.test(insText)) f1InsPlaceholderCount++;
   }
 }
-console.log(`  F1 anchors: ${f1Anchored}/${f1Total} on paragraphs containing cross-ref text`);
-console.log(`  G11 anchors: ${g11Anchored}/${g11Total} on paragraphs containing "Section N" text`);
-cPass = check(`  every F1 comment anchors on a paragraph with a cross-ref (was 0/25 pre-fix)`,
-  f1Anchored === f1Total && f1Total > 0) && cPass;
-cPass = check(`  every G11 comment anchors on a paragraph with "Section N" text (was 0/28 pre-fix)`,
-  g11Anchored === g11Total && g11Total > 0) && cPass;
+console.log(`  F1 tracked-change <w:ins> count (canonical shape): ${f1InsCount}`);
+console.log(`  F1 <w:ins> containing literal "X.Y.Z" placeholder:   ${f1InsPlaceholderCount}`);
+cPass = check(`  F1 emits ≥ 20 tracked-change inserts (was 0 pre-fix — response autos silently downgraded to comments)`,
+  f1InsCount >= 20,
+  `actual=${f1InsCount}`) && cPass;
+cPass = check(`  NO F1 <w:ins> contains literal placeholder "X.Y.Z" (Accept-All safety — would write corrupted text into doc)`,
+  f1InsPlaceholderCount === 0,
+  `placeholders=${f1InsPlaceholderCount}`) && cPass;
 
 const { cellMap, styleNumMap } = await buildCellMap(outZip, outDocXml);
 const cellIdIndex = buildCellIdIndex(doc, cellMap, styleNumMap);

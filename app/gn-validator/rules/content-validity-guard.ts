@@ -1,4 +1,4 @@
-import type { GNDocument, GNValidationResult } from '../types';
+import type { GNValidationResult } from '../types';
 
 /**
  * Generalized content-first guard.
@@ -93,39 +93,12 @@ export function applyContentValidityGuard(
   });
 }
 
-/**
- * Direct Marketing docs store the response in PARAGRAPHS, not in a table
- * Response cell (see parser-marketing.ts). The output pipeline's fix-
- * pipeline (auto-fix write-back) is CELL-BASED — it can't apply tracked
- * changes to a synthesised response that has no `<w:tc>` source. Pre-fix,
- * auto-fix findings on marketing response fields were silently dropped
- * from the output docx: the analyst saw them on-screen (in the display
- * payload) but not in the Word file.
- *
- * Fix: downgrade `auto → flag` for those findings so they anchor as
- * comments on the question heading paragraph via the fallback in
- * output/index.ts. The analyst still sees every finding; they just
- * apply the fix manually rather than getting a tracked change.
- *
- * NOT a permanent architectural choice — the proper follow-up is to
- * extend the fix-pipeline to apply diffs to paragraph runs directly.
- * Until then, this downgrade is the "never silently drop a finding"
- * safety net for DM docs. Documented in the Turkey fixture.
- *
- * Only affects `type === 'marketing'` docs. Overview/Breach/PIA/
- * Employment (real table Response cells) are unchanged.
- */
-export function downgradeSynthesizedResponseAutos(
-  doc: GNDocument,
-  results: GNValidationResult[],
-): GNValidationResult[] {
-  if (doc.type !== 'marketing') return results;
-  return results.map(r => {
-    if (r.fixType !== 'auto') return r;
-    if (r.field !== 'response') return r;
-    return { ...r, fixType: 'flag' };
-  });
-}
+// Historical: `downgradeSynthesizedResponseAutos(doc, results)` used to
+// live here as a stopgap that coerced marketing response `auto` findings
+// into `flag` because the cell-based fix-pipeline could not apply tracked
+// changes to paragraph-derived responses. Removed once runFixPipeline
+// learned to synthesise a ParaState-only CellState from
+// `q.response.responseParagraphs`. See app/gn-validator/output/fix-pipeline.ts.
 
 // Re-exported for tests + diagnostics that need to inspect the sets.
 export const __TESTING__ = {

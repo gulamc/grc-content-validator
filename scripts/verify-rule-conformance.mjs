@@ -65,7 +65,7 @@ const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const { parseGNDocument } = await import(`${root}/app/gn-validator/parser.ts`);
 const { generateDocx } = await import(`${root}/app/gn-validator/output/index.ts`);
 const { RULE_FNS } = await import(`${root}/app/gn-validator/rules/index.ts`);
-const { applyContentValidityGuard, downgradeSynthesizedResponseAutos } = await import(`${root}/app/gn-validator/rules/content-validity-guard.ts`);
+const { applyContentValidityGuard } = await import(`${root}/app/gn-validator/rules/content-validity-guard.ts`);
 const { buildCellMap, buildCellIdIndex } = await import(`${root}/app/gn-validator/output/cell-map.ts`);
 
 // ── SPEC source of truth ─────────────────────────────────────────────────────
@@ -209,17 +209,13 @@ for (const d of docs) {
         conformance = '❌';
         issues.push(`code emits ${codeFt}, spec says ${specFt}`);
       }
-      // Marketing exception: for DM docs, response lives in paragraphs
-      // (not a table cell). Auto-fix rules that fire on the response
-      // field CAN'T produce a tracked change — the fix-pipeline is
-      // cell-based. In production these findings are converted to
-      // comments by downgradeSynthesizedResponseAutos in the validate
-      // route. Here (rule-emission conformance) we skip the "spec-auto
-      // must have tracked changes" check when the doc is marketing AND
-      // every finding for this rule is on the response field.
-      const allOnResponse = list.every(f => f.field === 'response');
-      const marketingResponseException = d.type === 'marketing' && allOnResponse;
-      if (specFt === 'auto' && gnTrackedCount === 0 && list.length > 0 && !marketingResponseException) {
+      // Historical marketing exception REMOVED: DM response-field autos
+      // now emit real tracked changes via runFixPipeline's synthesised
+      // ParaState CellState for `q.response.responseParagraphs`. The
+      // fix-pipeline is no longer cell-only for DM responses, so
+      // "spec auto ⇒ must have tracked changes in docx" now holds
+      // unconditionally.
+      if (specFt === 'auto' && gnTrackedCount === 0 && list.length > 0) {
         conformance = '❌';
         issues.push(`spec auto-fix has ${list.length} screen findings but 0 GN tracked changes in docx`);
       }
