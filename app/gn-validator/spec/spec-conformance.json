@@ -1,0 +1,88 @@
+{
+  "$comment": [
+    "Spec-derived constants for the conformance gate (verify-spec-conformance.mjs).",
+    "Regenerated from dimension-spec.xlsx by the gate itself when --regenerate is passed.",
+    "Every rule listed under `spec_rules` is expected to exist in the DB seed with the",
+    "same fix_type and applies_to. The `known_deviations` block whitelists specific",
+    "documented drifts so they don't fail CI while the analyst rules on them.",
+    "Also see docs/spec-conformance-audit.md — the human-readable matrix behind this file."
+  ],
+  "$updated": "2026-07-11",
+  "spec_rules": {
+    "A1":  { "fix_type": "flag",          "applies_to": ["overview","breach","pia","employment","marketing"] },
+    "A2":  { "fix_type": "flag",          "applies_to": ["overview","breach","pia","employment"] },
+    "A3":  { "fix_type": "flag",          "applies_to": ["overview","breach","pia","employment","marketing"] },
+    "A4":  { "fix_type": "flag",          "applies_to": ["overview","breach","pia"] },
+    "B1":  { "fix_type": "auto",          "applies_to": ["overview","breach","pia","employment","marketing"] },
+    "B2":  { "fix_type": "auto",          "applies_to": ["overview","breach","pia","employment","marketing"] },
+    "B3":  { "fix_type": "flag",          "applies_to": ["overview","breach","pia","employment","marketing"] },
+    "B4":  { "fix_type": "ai-suggestion", "applies_to": ["overview","breach","pia","employment","marketing"] },
+    "B5":  { "fix_type": "flag",          "applies_to": ["overview","breach","pia","employment","marketing"] },
+    "C1":  { "fix_type": "flag",          "applies_to": ["overview","breach","pia"] },
+    "C2":  { "fix_type": "auto",          "applies_to": ["overview"] },
+    "C3":  { "fix_type": "flag",          "applies_to": ["overview","breach","pia"] },
+    "D1":  { "fix_type": "auto",          "applies_to": ["overview","breach","pia","employment","marketing"] },
+    "D2":  { "fix_type": "auto",          "applies_to": ["overview","breach","pia"] },
+    "D3":  { "fix_type": "auto",          "applies_to": ["overview","breach","pia","employment","marketing"] },
+    "D4":  { "fix_type": "auto",          "applies_to": ["overview","breach","pia"] },
+    "E1":  { "fix_type": "auto",          "applies_to": ["overview","breach","pia"] },
+    "E2":  { "fix_type": "flag",          "applies_to": ["overview","breach","pia","employment","marketing"] },
+    "F1":  { "fix_type": "auto",          "applies_to": ["overview","breach","pia","employment"] },
+    "G1":  { "fix_type": "flag",          "applies_to": ["overview","breach","pia","employment","marketing"] },
+    "G2":  { "fix_type": "auto",          "applies_to": ["overview","breach","pia","employment","marketing"] },
+    "G3":  { "fix_type": "flag",          "applies_to": ["overview","breach","pia","employment","marketing"] },
+    "G4":  { "fix_type": "flag",          "applies_to": ["overview","breach","pia","employment","marketing"] },
+    "G5":  { "fix_type": "flag",          "applies_to": ["overview","breach","pia","employment","marketing"] },
+    "G6":  { "fix_type": "flag",          "applies_to": ["overview","breach","pia","employment","marketing"] },
+    "G7":  { "fix_type": "auto",          "applies_to": ["overview","breach","pia","employment","marketing"] },
+    "G8":  { "fix_type": "flag",          "applies_to": ["overview","breach","pia","employment","marketing"] },
+    "G9":  { "fix_type": "flag",          "applies_to": ["overview","breach","pia","employment","marketing"] },
+    "G10": { "fix_type": "flag",          "applies_to": ["overview","breach","pia","employment","marketing"] },
+    "G11": { "fix_type": "auto",          "applies_to": ["overview","breach","pia","employment","marketing"] },
+    "G12": { "fix_type": "flag",          "applies_to": ["overview","breach","pia","employment","marketing"] },
+    "H1":  { "fix_type": "auto",          "applies_to": ["overview","breach","pia","employment","marketing"] },
+    "H2":  { "fix_type": "flag",          "applies_to": ["overview","breach","pia","employment","marketing"] },
+    "H3":  { "fix_type": "auto",          "applies_to": ["overview","breach","pia","employment","marketing"] },
+    "H4":  { "fix_type": "ai-suggestion", "applies_to": ["overview","breach","pia","employment","marketing"] },
+    "H5":  { "fix_type": "flag",          "applies_to": ["overview","breach","pia","employment","marketing"] },
+    "H6":  { "fix_type": "flag",          "applies_to": ["overview","breach","pia","employment","marketing"] },
+    "H7":  { "fix_type": "flag",          "applies_to": ["overview","breach","pia","employment","marketing"] },
+    "I1":  { "fix_type": "ai-suggestion", "applies_to": ["overview","breach","pia","employment"] },
+    "I2":  { "fix_type": "flag",          "applies_to": ["overview","breach","pia","employment"] },
+    "I3":  { "fix_type": "flag",          "applies_to": ["overview","breach","pia","employment"] }
+  },
+  "known_deviations": {
+    "$comment": [
+      "Every entry here corresponds to a row in docs/spec-conformance-audit.md.",
+      "Removing a deviation entry re-arms the gate against that specific drift.",
+      "Adding a new entry requires updating the audit doc — the two files are locked together."
+    ],
+    "applies_to_deltas": {
+      "$comment": "DB applies_to differs from spec applies_to; each entry lists the EXPECTED DB bits.",
+      "C2":  { "db_applies_to": ["overview","breach","pia"], "reason": "OQ3 open in spec; drafter pre-decided Breach/PIA lists in NOT_APPLICABLE_PERSONA_SECTIONS." },
+      "C3":  { "db_applies_to": ["overview"],                 "reason": "Code short-circuits `if (doc.type !== 'overview')`; DB matches code. Spec expects Overview/Breach/PIA." },
+      "E2":  { "db_applies_to": ["overview","breach","pia","employment"], "reason": "DB missing marketing; spec is All RQF. Combined with is_active=0 (see below) — E2 is entirely dormant." },
+      "F1":  { "db_applies_to": ["overview","breach","pia","employment","marketing"], "reason": "Migration 004 added marketing; spec omits marketing. User's item (a): spec-erratum candidate — style guide's cross-reference rule is not GN-type-restricted." },
+      "I1":  { "db_applies_to": ["overview","breach","pia","employment","marketing"], "reason": "Migration 004 added marketing; spec omits marketing. Same spec-erratum family as F1." },
+      "I2":  { "db_applies_to": ["overview","breach","pia","employment","marketing"], "reason": "Migration 004 added marketing; spec omits marketing. Same spec-erratum family as F1." },
+      "I3":  { "db_applies_to": ["overview","breach","pia","employment","marketing"], "reason": "Migration 004 added marketing; spec omits marketing. Same spec-erratum family as F1." }
+    },
+    "fix_type_drift": {
+      "$comment": "DB fix_type disagrees with spec; code emits the spec value at runtime so no behaviour impact.",
+      "C1":  { "db_fix_type": "ai-suggestion", "spec_fix_type": "flag", "reason": "Seed comment describes an old three-part plan (auto-correct + flag + AI); spec landed at flag-only. Code emits flag. DB metadata drift only." }
+    },
+    "inactive_rules": {
+      "$comment": "DB is_active=0 rules that spec expects to be active.",
+      "E2":  { "reason": "Deferred to AI phase per pre-existing decision; spec has E2 as flag-only rule-based check." }
+    },
+    "code_only_rules": {
+      "$comment": "Rules present in DB seed + code but NOT in spec sheet.",
+      "F2":  { "db_fix_type": "ai-suggestion", "reason": "Stub returning []. Placeholder for planned 'cross-reference citation duplication' AI check." },
+      "G10b": { "db_fix_type": "flag",         "reason": "Fully implemented (scorer wrapper on bullet-first-word). Variant of G10 that runs on response only." }
+    },
+    "missing_from_db": {
+      "$comment": "Spec rules with no row in the DB seed after all migrations. Rule is registered in RULE_FNS but runGNRules filters via DB configs — these NEVER RUN on production.",
+      "B5":  { "reason": "Seed omission at migration 001. Rule works in fixtures (which use RULE_FNS directly) but production is under-validating. Analyst decision needed: add via migration 005." }
+    }
+  }
+}

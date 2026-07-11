@@ -44,6 +44,7 @@ scripts/*
 !scripts/verify-turkey-live-route.mjs
 !scripts/verify-marketing-rule-config-consistency.mjs
 !scripts/verify-g2-predicate.mjs
+!scripts/verify-spec-conformance.mjs
 !scripts/lib-clean-fixture.mjs
 !scripts/compile-spec.mjs
 !scripts/parse-rqf-template.mjs
